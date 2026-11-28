@@ -29,9 +29,12 @@ from src.config import get_settings
 from src.core.auth import REFRESH_REQUIRED_CHALLENGE, Context, CurrentUser
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
+from src.models.orm.federated_credentials import FederatedCredential
 from src.routers.auth import router as auth_router
 from src.services.authorization.tokens import (
     RuntimeSubject,
+    TokenSubjectUnavailable,
+    WorkloadSubject,
     authenticate_runtime_token,
     issue_access_token,
     issue_run_refresh_token,
@@ -160,6 +163,107 @@ async def test_an_ended_run_is_refused_without_a_challenge(async_engine: AsyncEn
     assert refused.status_code == 401
     assert refused.headers["www-authenticate"] == "Bearer"
     assert refreshed.status_code == 401
+
+
+async def test_workload_mapping_edit_or_revocation_refuses_without_human_refresh(
+    async_engine: AsyncEngine,
+) -> None:
+    app = _app([])
+    async with committed_world(async_engine) as world:
+        organization = await world.organization()
+        identity = await world.person(organization)
+        identity.identity_kind = "custom"
+        credential = FederatedCredential(
+            identity_id=identity.id,
+            name="Exchange",
+            issuer="https://issuer.example",
+            audience="bifrost",
+            subject="workload",
+            subject_token_type="urn:ietf:params:oauth:token-type:id_token",
+        )
+        world.session.add(credential)
+        await world.session.flush()
+        subject = WorkloadSubject(credential.id, credential.revision)
+        await world.session.commit()
+
+        access = (await issue_access_token(subject)).token
+        accepted = await _send(app, "POST", "/probe", access)
+
+        credential.token_ttl_seconds = 301
+        credential.revision += 1
+        await world.session.commit()
+        edited = await _send(app, "POST", "/probe", access)
+        no_refresh = await _refresh(app, access)
+
+        credential.enabled = False
+        await world.session.commit()
+        revoked = await _send(app, "POST", "/probe", access)
+
+    assert accepted.status_code == 200
+    assert (edited.status_code, edited.headers["www-authenticate"]) == (401, "Bearer")
+    assert (revoked.status_code, revoked.headers["www-authenticate"]) == (401, "Bearer")
+    assert no_refresh.status_code == 401
+
+
+async def test_workload_minter_refuses_a_credential_revised_after_external_validation(
+    async_engine: AsyncEngine,
+) -> None:
+    async with committed_world(async_engine) as world:
+        organization = await world.organization()
+        identity = await world.person(organization)
+        identity.identity_kind = "custom"
+        credential = FederatedCredential(
+            identity_id=identity.id,
+            name="Exchange",
+            issuer="https://issuer.example",
+            audience="bifrost",
+            subject="workload",
+            subject_token_type="urn:ietf:params:oauth:token-type:id_token",
+        )
+        world.session.add(credential)
+        await world.session.flush()
+        validated = WorkloadSubject(credential.id, credential.revision)
+        credential.revision += 1
+        await world.session.commit()
+
+        with pytest.raises(TokenSubjectUnavailable):
+            await issue_access_token(validated)
+
+
+async def test_mcp_accepts_a_live_workload_token_and_refuses_it_after_revocation(
+    async_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.services.mcp_server.auth import BifrostAuthProvider
+
+    provider = BifrostAuthProvider(base_url="https://test.example.com")
+    monkeypatch.setattr(provider, "_check_mcp_access", AsyncMock(return_value=True))
+    async with committed_world(async_engine) as world:
+        organization = await world.organization()
+        identity = await world.person(organization)
+        identity.identity_kind = "custom"
+        credential = FederatedCredential(
+            identity_id=identity.id,
+            name="Exchange",
+            issuer="https://issuer.example",
+            audience="bifrost",
+            subject="workload",
+            subject_token_type="urn:ietf:params:oauth:token-type:id_token",
+        )
+        world.session.add(credential)
+        await world.session.flush()
+        subject = WorkloadSubject(credential.id, credential.revision)
+        await world.session.commit()
+
+        access = (await issue_access_token(subject)).token
+        accepted = await provider.verify_token(access)
+
+        credential.enabled = False
+        await world.session.commit()
+        refused = await provider.verify_token(access)
+
+    assert accepted is not None
+    assert accepted.client_id == str(identity.id)
+    assert refused is None
 
 
 async def test_an_expired_service_lease_is_refused_without_a_challenge(async_engine: AsyncEngine) -> None:

@@ -32,6 +32,7 @@ from src.models.orm.scheduler_diagnostics import (
 )
 from src.models.orm.form_embed_secrets import FormEmbedSecret
 from src.models.orm.form_publications import FormPublication
+from src.models.orm.federated_credentials import FederatedCredential
 from src.models.orm.human_sessions import HumanAuthSession
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
@@ -130,6 +131,7 @@ __all__ = [
     "SystemDiagnosticLog",
     "AppEmbedSecret",
     "AppRole",
+    "FederatedCredential",
     # Users and Roles
     "User",
     "Role",

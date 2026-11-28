@@ -4,7 +4,9 @@ Every organization has a default identity (`org_default`); one global identity
 (`global_default`) has no organization; admins may add more (`custom`). Every
 default is named "Default Identity" and can't be renamed: its organization
 tells them apart. They are ordinary users — roles, reach and attribution work
-as for anyone — but never sign in. `users.identity_kind` marks them.
+as for anyone — but never use an interactive human sign-in grant. A configured
+federated credential can mint an access-only workload token for a non-human
+identity. `users.identity_kind` marks them.
 """
 
 from __future__ import annotations
@@ -48,7 +50,12 @@ def is_identity_email(email: str) -> bool:
 
 
 def refuse_identity_sign_in(user: User) -> None:
-    """Every path that signs a user in, or gives them a credential, calls this."""
+    """Reject interactive human sign-in and session grants for identities.
+
+    The separately configured workload token-exchange path validates an
+    external JWT and mints access-only credentials; it does not call this
+    human-session guard.
+    """
     if is_identity(user):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

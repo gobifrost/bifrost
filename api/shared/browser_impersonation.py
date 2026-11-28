@@ -58,6 +58,7 @@ async def create_browser_impersonation(
     """Authorize and mint a browser-wide impersonation marker for ``target_user_id``."""
     if (
         initiator.embed
+        or initiator.workload_credential_id is not None
         or initiator.runtime_authority is not None
         or initiator.impersonated_by_user_id is not None
         or initiator.impersonation_session_id is not None

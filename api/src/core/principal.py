@@ -87,9 +87,11 @@ class UserPrincipal:
     # (``tokens.authenticate_runtime_token``) and ``load_runtime_principal``.
     # No other transport claims populate it.
     runtime_authority: "RuntimeAuthority | None" = None
-    # Only the authenticated human claims resolver installs this context.
+    # Only authenticated claims resolvers install this context.
     authorization_context: "AuthorizationContext | None" = None
     auth_session_id: UUID | None = None
+    # A federated workload is a machine credential, never a human session.
+    workload_credential_id: UUID | None = None
 
     @property
     def is_platform_admin(self) -> bool:

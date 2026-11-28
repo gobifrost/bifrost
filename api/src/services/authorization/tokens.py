@@ -49,6 +49,7 @@ from src.core.database import get_session_factory
 from src.core.principal import UserPrincipal
 from src.models.contracts.workflow_permissions import WorkflowGrant, WorkflowPermissionMode
 from src.models.orm.organizations import Organization
+from src.models.orm.federated_credentials import FederatedCredential
 from src.models.orm.users import Role, RolePermission, User, UserRole
 from src.services.authorization.authz import AuthorityStateMissing, read_authority_state, read_epoch
 from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant, build_authorization_context
@@ -214,6 +215,17 @@ class HumanAccessTokenClaims(_AccessClaims):
     sid: UUID | None = None
 
 
+class FederatedCredentialClaims(_Claims):
+    id: UUID
+    rev: int
+
+
+class WorkloadAccessTokenClaims(_AccessClaims):
+    """Access claims for a non-human identity authenticated by federation."""
+
+    fed: FederatedCredentialClaims
+
+
 class RunRefreshClaims(_Claims):
     """A run refresh token: identity only, no expiry; valid while the run is
     live, and accepted only by ``/auth/refresh``."""
@@ -232,14 +244,14 @@ class RunRefreshClaims(_Claims):
         return self.model_dump(mode="json", exclude_none=True)
 
 
-def _encode_claims(claims: AccessTokenClaims | HumanAccessTokenClaims | RunRefreshClaims) -> str:
+def _encode_claims(claims: AccessTokenClaims | HumanAccessTokenClaims | WorkloadAccessTokenClaims | RunRefreshClaims) -> str:
     """Sign a run token, warning (never refusing) when an access token is large."""
     settings = get_settings()
     token = jwt.encode(claims.to_payload(), settings.secret_key, algorithm=settings.algorithm)
     if isinstance(claims, _AccessClaims) and len(token) > TOKEN_SIZE_WARNING_BYTES:
         logger.warning(
             "authz.token_size_warning: %s access token for %s is %d bytes (warning above %d)",
-            claims.credential_kind if isinstance(claims, AccessTokenClaims) else "human",
+            claims.credential_kind if isinstance(claims, AccessTokenClaims) else "workload" if isinstance(claims, WorkloadAccessTokenClaims) else "human",
             claims.sub,
             len(token),
             TOKEN_SIZE_WARNING_BYTES,
@@ -292,6 +304,18 @@ def parse_human_claims(payload: dict[str, Any]) -> HumanAccessTokenClaims | None
     return claims
 
 
+def parse_workload_claims(payload: dict[str, Any]) -> WorkloadAccessTokenClaims | None:
+    if payload.get("ver") != CLAIMS_VERSION or "fed" not in payload:
+        return None
+    try:
+        claims = WorkloadAccessTokenClaims.model_validate(payload)
+    except ValidationError:
+        return None
+    if claims.sub != claims.usr.id or claims.usr.kind is None or not claims.usr.active:
+        return None
+    return claims
+
+
 def _context_from_user(user: UserClaims) -> AuthorizationContext:
     return AuthorizationContext(
         user_id=user.id,
@@ -331,6 +355,20 @@ def _human_principal(claims: HumanAccessTokenClaims) -> UserPrincipal:
         authorization_context=context,
         auth_session_id=claims.sid,
         token_exp=claims.exp,
+    )
+
+
+def _workload_principal(claims: WorkloadAccessTokenClaims) -> UserPrincipal:
+    user = claims.usr
+    context = _context_from_user(user)
+    names = [role.name for role in user.roles]
+    return UserPrincipal(
+        user_id=user.id, email=user.email, name=user.name or "", organization_id=user.org,
+        is_active=user.active, is_verified=True, is_superuser=context.is_platform_admin,
+        is_external=user.ext, is_provider_org=user.prov, roles=["authenticated", *names],
+        role_ids=[role.id for role in user.roles], role_names=names,
+        authorization_context=context, token_exp=claims.exp,
+        workload_credential_id=claims.fed.id,
     )
 
 
@@ -484,6 +522,20 @@ async def authenticate_human_token(db: AsyncSession, claims: HumanAccessTokenCla
     return RuntimeAuthResult(_human_principal(claims))
 
 
+async def authenticate_workload_token(db: AsyncSession, claims: WorkloadAccessTokenClaims) -> RuntimeAuthResult:
+    """Refuse tokens whose exact mapping revision is no longer live."""
+    from src.services.authorization.authz import read_workload_authority_state
+
+    state = await read_workload_authority_state(db, claims.fed.id, claims.sub, claims.fed.rev)
+    if state.epoch is None:
+        logger.error("authz.epoch_missing: refusing a workload access token")
+        return RuntimeAuthResult(None, "authority_state_missing")
+    if not state.live or state.epoch != int(claims.av):
+        # Workload assertions have no refresh grant.
+        return RuntimeAuthResult(None, "not_live")
+    return RuntimeAuthResult(_workload_principal(claims))
+
+
 # --- The minter ----------------------------------------------------------------
 
 
@@ -505,6 +557,14 @@ class HumanSubject:
 
 
 @dataclass(frozen=True)
+class WorkloadSubject:
+    """An enabled external assertion mapping bound to an identity."""
+
+    credential_id: UUID
+    revision: int
+
+
+@dataclass(frozen=True)
 class IssuedAccessToken:
     token: str
     expires_at: datetime
@@ -519,6 +579,13 @@ class IssuedHumanAccessToken:
     token: str
     expires_at: datetime
     claims: HumanAccessTokenClaims
+
+
+@dataclass(frozen=True)
+class IssuedWorkloadAccessToken:
+    token: str
+    expires_at: datetime
+    claims: WorkloadAccessTokenClaims
 
 
 class TokenSubjectUnavailable(Exception):
@@ -539,7 +606,12 @@ async def issue_access_token(subject: HumanSubject) -> IssuedHumanAccessToken:
     """Mint a credential for an eligible human and durable session family."""
 
 
-async def issue_access_token(subject: RuntimeSubject | HumanSubject) -> IssuedAccessToken | IssuedHumanAccessToken:
+@overload
+async def issue_access_token(subject: WorkloadSubject) -> IssuedWorkloadAccessToken:
+    """Mint a short-lived credential for a federated non-human identity."""
+
+
+async def issue_access_token(subject: RuntimeSubject | HumanSubject | WorkloadSubject) -> IssuedAccessToken | IssuedHumanAccessToken | IssuedWorkloadAccessToken:
     """Mint a ``ver: 1`` access token for a live run or eligible human.
 
     Every fact and the epoch come from one read-only ``REPEATABLE READ``
@@ -559,6 +631,11 @@ async def issue_access_token(subject: RuntimeSubject | HumanSubject) -> IssuedAc
             human = await _snapshot_human_claims(db, subject)
             return IssuedHumanAccessToken(
                 _encode_claims(human), datetime.fromtimestamp(human.exp, timezone.utc), human
+            )
+        if isinstance(subject, WorkloadSubject):
+            workload = await _snapshot_workload_claims(db, subject)
+            return IssuedWorkloadAccessToken(
+                _encode_claims(workload), datetime.fromtimestamp(workload.exp, timezone.utc), workload
             )
         claims, authority = await _snapshot_claims(db, subject)
     return IssuedAccessToken(
@@ -616,6 +693,66 @@ async def _snapshot_human_claims(db: AsyncSession, subject: HumanSubject) -> Hum
                 bnd=[(b.kind, b.organization_id) for b in boundaries.get(role.id, ())],
             ) for role in held_roles],
         ),
+    )
+
+
+async def _snapshot_workload_claims(db: AsyncSession, subject: WorkloadSubject) -> WorkloadAccessTokenClaims:
+    credential = (
+        await db.execute(
+            select(
+                FederatedCredential.id,
+                FederatedCredential.identity_id,
+                FederatedCredential.revision,
+                FederatedCredential.token_ttl_seconds,
+                FederatedCredential.enabled,
+            ).where(FederatedCredential.id == subject.credential_id)
+        )
+    ).one_or_none()
+    if credential is None or not credential.enabled or credential.revision != subject.revision:
+        raise TokenSubjectUnavailable("The federated credential is not available.")
+    row = (
+        await db.execute(
+            select(
+                User.id, User.email, User.name, User.organization_id,
+                User.is_external, User.identity_kind, User.is_active, User.is_system, Organization.is_provider,
+            )
+            .outerjoin(Organization, Organization.id == User.organization_id)
+            .where(User.id == credential.identity_id)
+        )
+    ).one_or_none()
+    if row is None or not row.is_active or row.is_system or row.identity_kind is None:
+        raise TokenSubjectUnavailable("The federated identity is not available.")
+    context = await build_authorization_context(db, row.id)
+    held_roles = (
+        await db.execute(
+            select(Role.id, Role.name)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .where(UserRole.user_id == row.id)
+            .order_by(Role.name, Role.id)
+        )
+    ).all()
+    permissions: dict[UUID, list[str]] = {role.id: [] for role in held_roles}
+    if permissions:
+        for role_id, permission in (
+            await db.execute(select(RolePermission.role_id, RolePermission.permission).where(RolePermission.role_id.in_(permissions)))
+        ).all():
+            permissions[role_id].append(permission)
+    boundaries = {grant.role_id: grant.boundaries for grant in context.role_grants}
+    now = _now()
+    settings = get_settings()
+    return WorkloadAccessTokenClaims(
+        iss=settings.jwt_issuer, aud=settings.jwt_audience, iat=now,
+        exp=now + credential.token_ttl_seconds, jti=str(uuid4()), av=str(await read_epoch(db)), sub=row.id,
+        usr=UserClaims(
+            id=row.id, email=row.email, name=row.name, kind=row.identity_kind,
+            org=row.organization_id, ext=bool(row.is_external), prov=bool(row.is_provider), active=row.is_active,
+            base=BaseRoleClaim(id=context.base_role_id, perm=sorted(context.base_permissions)),
+            roles=[RoleClaim(
+                id=role.id, name=role.name, perm=sorted(permissions[role.id]),
+                bnd=[(boundary.kind, boundary.organization_id) for boundary in boundaries.get(role.id, ())],
+            ) for role in held_roles],
+        ),
+        fed=FederatedCredentialClaims(id=credential.id, rev=credential.revision),
     )
 
 

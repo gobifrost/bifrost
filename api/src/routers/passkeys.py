@@ -53,7 +53,9 @@ async def _passkey_allowed_for(db: DbSession, user=None) -> bool:
 
 
 def _refuse_impersonation_enrollment(user: CurrentActiveUser) -> None:
-    """Keep temporary support sessions from enrolling a durable passkey."""
+    """Keep support sessions and machine credentials out of human enrollment."""
+    if user.workload_credential_id is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Workload identities cannot manage passkeys")
     if is_browser_impersonation(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

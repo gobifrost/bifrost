@@ -28,7 +28,9 @@ router = APIRouter(prefix="/auth/mfa", tags=["mfa"])
 
 
 def _refuse_impersonation_enrollment(current_user: CurrentActiveUser) -> None:
-    """Keep temporary support sessions from creating durable MFA credentials."""
+    """Keep support sessions and machine credentials out of human enrollment."""
+    if current_user.workload_credential_id is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Workload identities cannot manage MFA credentials")
     if is_browser_impersonation(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

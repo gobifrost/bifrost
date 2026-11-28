@@ -8421,6 +8421,42 @@ export interface paths {
         patch: operations["rename_identity_api_identities__identity_id__patch"];
         trace?: never;
     };
+    "/api/identities/{identity_id}/federated-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Identity Federated Credentials */
+        get: operations["list_identity_federated_credentials_api_identities__identity_id__federated_credentials_get"];
+        put?: never;
+        /** Create Identity Federated Credential */
+        post: operations["create_identity_federated_credential_api_identities__identity_id__federated_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identities/{identity_id}/federated-credentials/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Identity Federated Credential */
+        delete: operations["delete_identity_federated_credential_api_identities__identity_id__federated_credentials__credential_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Identity Federated Credential */
+        patch: operations["update_identity_federated_credential_api_identities__identity_id__federated_credentials__credential_id__patch"];
+        trace?: never;
+    };
     "/api/base-role-defaults": {
         parameters: {
             query?: never;
@@ -19475,6 +19511,103 @@ export interface components {
          */
         Expr: {
             [key: string]: unknown;
+        };
+        /** FederatedCredentialCreate */
+        FederatedCredentialCreate: {
+            /** Name */
+            name: string;
+            /** Issuer */
+            issuer: string;
+            /** Discovery Url */
+            discovery_url?: string | null;
+            /** Audience */
+            audience: string;
+            /** Subject */
+            subject: string;
+            /** Claims */
+            claims?: {
+                [key: string]: string;
+            };
+            /**
+             * Subject Token Type
+             * @default urn:ietf:params:oauth:token-type:id_token
+             */
+            subject_token_type: string;
+            /**
+             * Token Ttl Seconds
+             * @default 300
+             */
+            token_ttl_seconds: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /** FederatedCredentialPublic */
+        FederatedCredentialPublic: {
+            /** Name */
+            name: string;
+            /** Issuer */
+            issuer: string;
+            /** Discovery Url */
+            discovery_url?: string | null;
+            /** Audience */
+            audience: string;
+            /** Subject */
+            subject: string;
+            /** Claims */
+            claims?: {
+                [key: string]: string;
+            };
+            /**
+             * Subject Token Type
+             * @default urn:ietf:params:oauth:token-type:id_token
+             */
+            subject_token_type: string;
+            /**
+             * Token Ttl Seconds
+             * @default 300
+             */
+            token_ttl_seconds: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Identity Id
+             * Format: uuid
+             */
+            identity_id: string;
+        };
+        /** FederatedCredentialUpdate */
+        FederatedCredentialUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Issuer */
+            issuer?: string | null;
+            /** Discovery Url */
+            discovery_url?: string | null;
+            /** Audience */
+            audience?: string | null;
+            /** Subject */
+            subject?: string | null;
+            /** Claims */
+            claims?: {
+                [key: string]: string;
+            } | null;
+            /** Subject Token Type */
+            subject_token_type?: string | null;
+            /** Token Ttl Seconds */
+            token_ttl_seconds?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
         };
         /**
          * FileChange
@@ -49066,6 +49199,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_identity_federated_credentials_api_identities__identity_id__federated_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederatedCredentialPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_identity_federated_credential_api_identities__identity_id__federated_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FederatedCredentialCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederatedCredentialPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_identity_federated_credential_api_identities__identity_id__federated_credentials__credential_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_identity_federated_credential_api_identities__identity_id__federated_credentials__credential_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FederatedCredentialUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederatedCredentialPublic"];
                 };
             };
             /** @description Validation Error */

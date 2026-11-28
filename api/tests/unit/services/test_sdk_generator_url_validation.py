@@ -30,7 +30,7 @@ def test_rejects_non_https_scheme() -> None:
 
 def test_rejects_private_address(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "src.services.sdk_generator.socket.getaddrinfo",
+        "shared.url_safety.socket.getaddrinfo",
         _fake_getaddrinfo_private,
     )
     monkeypatch.delenv("SDK_GENERATOR_ALLOWED_HOSTS", raising=False)
@@ -43,7 +43,7 @@ def test_allows_public_address_when_no_allowlist(
 ) -> None:
     """Default behavior: any https URL resolving to a public IP is allowed."""
     monkeypatch.setattr(
-        "src.services.sdk_generator.socket.getaddrinfo",
+        "shared.url_safety.socket.getaddrinfo",
         _fake_getaddrinfo_public,
     )
     monkeypatch.delenv("SDK_GENERATOR_ALLOWED_HOSTS", raising=False)
@@ -53,7 +53,7 @@ def test_allows_public_address_when_no_allowlist(
 
 def test_allowlist_permits_listed_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "src.services.sdk_generator.socket.getaddrinfo",
+        "shared.url_safety.socket.getaddrinfo",
         _fake_getaddrinfo_public,
     )
     monkeypatch.setenv(
@@ -66,7 +66,7 @@ def test_allowlist_permits_listed_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_allowlist_blocks_unlisted_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "src.services.sdk_generator.socket.getaddrinfo",
+        "shared.url_safety.socket.getaddrinfo",
         _fake_getaddrinfo_public,
     )
     monkeypatch.setenv("SDK_GENERATOR_ALLOWED_HOSTS", "api.example.com")
@@ -76,7 +76,7 @@ def test_allowlist_blocks_unlisted_host(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_allowlist_is_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "src.services.sdk_generator.socket.getaddrinfo",
+        "shared.url_safety.socket.getaddrinfo",
         _fake_getaddrinfo_public,
     )
     monkeypatch.setenv("SDK_GENERATOR_ALLOWED_HOSTS", "API.Example.com")
@@ -87,7 +87,7 @@ def test_empty_allowlist_env_treated_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "src.services.sdk_generator.socket.getaddrinfo",
+        "shared.url_safety.socket.getaddrinfo",
         _fake_getaddrinfo_public,
     )
     monkeypatch.setenv("SDK_GENERATOR_ALLOWED_HOSTS", "   ")
@@ -101,7 +101,7 @@ def test_unresolvable_hostname_rejected(monkeypatch: pytest.MonkeyPatch) -> None
         raise _socket.gaierror("no resolution")
 
     monkeypatch.setattr(
-        "src.services.sdk_generator.socket.getaddrinfo",
+        "shared.url_safety.socket.getaddrinfo",
         _raise,
     )
     monkeypatch.delenv("SDK_GENERATOR_ALLOWED_HOSTS", raising=False)

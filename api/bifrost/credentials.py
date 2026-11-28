@@ -15,6 +15,7 @@ dotenv files never own credentials.
 """
 
 import json
+import base64
 import os
 import platform
 import sys
@@ -184,8 +185,14 @@ class EnvBackend:
             return None
         access = os.environ.get("BIFROST_ACCESS_TOKEN", "")
         refresh = os.environ.get("BIFROST_REFRESH_TOKEN", "")
-        if not access or not refresh:
+        if not access:
             return None
+        if not refresh:
+            expires_at = _workload_token_expiry(access)
+            if expires_at is None:
+                # Human environment credentials remain a complete tuple.
+                return None
+            return Credentials(api_url=env_url, access_token=access, refresh_token="", expires_at=expires_at)
         # Env-sourced credentials have no recorded expiry; use a far-future
         # placeholder so is_token_expired() doesn't trigger automatic refresh.
         # Refresh-on-401 still works in client.py.
@@ -205,9 +212,26 @@ class EnvBackend:
 
     def list_urls(self) -> list[str]:
         env_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
-        if env_url and os.environ.get("BIFROST_ACCESS_TOKEN") and os.environ.get("BIFROST_REFRESH_TOKEN"):
-            return [env_url]
-        return []
+        return [env_url] if env_url and self.get(env_url) is not None else []
+
+
+def _workload_token_expiry(token: str) -> str | None:
+    """Recognize a Bifrost workload token only as a local storage hint.
+
+    The server validates the signature and live credential mapping. This only
+    prevents an access-only human environment tuple from becoming valid.
+    """
+    try:
+        payload = token.split(".")[1]
+        data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        if not isinstance(data, dict):
+            return None
+        if data.get("type") != "access" or data.get("ver") != 1 or not isinstance(data.get("fed"), dict):
+            return None
+        expiry = datetime.fromtimestamp(int(data["exp"]), timezone.utc)
+    except (IndexError, KeyError, TypeError, ValueError, UnicodeDecodeError, OverflowError):
+        return None
+    return expiry.isoformat()
 
 
 class JsonBackend:

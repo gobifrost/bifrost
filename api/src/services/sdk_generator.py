@@ -13,16 +13,13 @@ Supported auth types:
 """
 
 import hashlib
-import ipaddress
 import json
 import logging
 import os
 import re
-import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 import requests
 import yaml
@@ -97,43 +94,12 @@ def _allowed_hosts() -> set[str] | None:
 
 
 def _validate_spec_url(url: str) -> None:
-    """Validate a URL is safe to fetch (https only, public address).
+    """Require a public HTTPS URL and the SDK generator's optional host policy."""
+    from shared.url_safety import validate_public_https_url
 
-    Prevents SSRF by rejecting non-https schemes and hostnames that resolve
-    to private, loopback, link-local, reserved, or multicast addresses.
-    Optionally enforces a hostname allowlist from `SDK_GENERATOR_ALLOWED_HOSTS`.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme != "https":
-        raise ValueError(f"Only https URLs are allowed, got {parsed.scheme!r}")
-    if not parsed.hostname:
-        raise ValueError("URL must have a hostname")
-
-    hostname = parsed.hostname.lower()
-    allowed = _allowed_hosts()
-    if allowed is not None and hostname not in allowed:
-        raise ValueError(
-            f"Hostname {hostname!r} is not in SDK_GENERATOR_ALLOWED_HOSTS"
-        )
-
-    try:
-        addr_info = socket.getaddrinfo(parsed.hostname, None)
-    except socket.gaierror as e:
-        raise ValueError(f"Cannot resolve hostname {parsed.hostname}: {e}") from e
-    for _family, _type, _proto, _canon, sockaddr in addr_info:
-        ip_str = sockaddr[0]
-        ip = ipaddress.ip_address(ip_str)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            raise ValueError(
-                f"URL hostname resolves to non-public address: {ip_str}"
-            )
+    validate_public_https_url(
+        url, allowed_hosts=_allowed_hosts(), allowed_hosts_name=_SDK_ALLOWED_HOSTS_ENV
+    )
 
 
 def load_spec_from_url(url: str) -> dict:

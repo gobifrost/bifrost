@@ -440,3 +440,24 @@ def test_user_list_excludes_identities(e2e_client, platform_admin, world) -> Non
     assert {person["email"] for person in people} >= {world["plain"].email, world["lifecycle"].email}
     assert all(person["identity_kind"] is None for person in people)
     assert default["id"] not in {person["id"] for person in people}
+
+
+def test_federated_credentials_follow_identity_read_manage_and_delegation_boundaries(e2e_client, platform_admin, world) -> None:
+    admin, holder, tag, contoso = platform_admin.headers, world["lifecycle"].headers, world["tag"], world["contoso"]
+    identity = _ok(_create(e2e_client, admin, f"Federated {tag}", contoso["id"]), 201)
+    base = f"/api/identities/{identity['id']}/federated-credentials"
+    body = {
+        "name": "GitHub",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "audience": "https://bifrost.example",
+        "subject": f"repo:owner@1/repo@2:ref:refs/heads/main-{tag}",
+        "claims": {"repository_id": "2"},
+        "token_ttl_seconds": 300,
+    }
+
+    created = _ok(e2e_client.post(base, headers=holder, json=body), 201)
+    assert created["identity_id"] == identity["id"]
+    assert created["subject_token_type"] == "urn:ietf:params:oauth:token-type:id_token"
+    assert _ok(e2e_client.get(base, headers=holder)) == [created]
+    assert e2e_client.patch(f"{base}/{created['id']}", headers=holder, json={"enabled": False}).status_code == 200
+    assert e2e_client.delete(f"{base}/{created['id']}", headers=holder).status_code == 204

@@ -12,7 +12,14 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.models.contracts.identities import IdentityCreate, IdentityPublic, IdentityUpdate
+from src.models.contracts.identities import (
+    FederatedCredentialCreate,
+    FederatedCredentialPublic,
+    FederatedCredentialUpdate,
+    IdentityCreate,
+    IdentityPublic,
+    IdentityUpdate,
+)
 from src.services.authorization.enforce import load_caller
 from src.services.identities import (
     IdentityError,
@@ -20,6 +27,13 @@ from src.services.identities import (
     delete_identity as delete_identity_service,
     list_identities as list_identities_service,
     rename_identity as rename_identity_service,
+)
+from src.services.federated_credentials import (
+    FederatedCredentialError,
+    create_federated_credential,
+    delete_federated_credential,
+    list_federated_credentials,
+    update_federated_credential,
 )
 
 router = APIRouter(prefix="/api/identities", tags=["Identities"])
@@ -85,3 +99,51 @@ async def delete_identity(identity_id: UUID, user: CurrentActiveUser, db: DbSess
         await delete_identity_service(db, await load_caller(db, user), identity_id)
     except IdentityError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+@router.get("/{identity_id}/federated-credentials", response_model=list[FederatedCredentialPublic])
+async def list_identity_federated_credentials(
+    identity_id: UUID, user: CurrentActiveUser, db: DbSession
+) -> list[FederatedCredentialPublic]:
+    try:
+        return await list_federated_credentials(db, await load_caller(db, user), identity_id)
+    except (IdentityError, FederatedCredentialError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+@router.post(
+    "/{identity_id}/federated-credentials",
+    response_model=FederatedCredentialPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_identity_federated_credential(
+    identity_id: UUID, body: FederatedCredentialCreate, user: CurrentActiveUser, db: DbSession
+) -> FederatedCredentialPublic:
+    try:
+        return await create_federated_credential(db, await load_caller(db, user), identity_id, body)
+    except (IdentityError, FederatedCredentialError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+@router.patch("/{identity_id}/federated-credentials/{credential_id}", response_model=FederatedCredentialPublic)
+async def update_identity_federated_credential(
+    identity_id: UUID,
+    credential_id: UUID,
+    body: FederatedCredentialUpdate,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> FederatedCredentialPublic:
+    try:
+        return await update_federated_credential(db, await load_caller(db, user), identity_id, credential_id, body)
+    except (IdentityError, FederatedCredentialError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+@router.delete("/{identity_id}/federated-credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_identity_federated_credential(
+    identity_id: UUID, credential_id: UUID, user: CurrentActiveUser, db: DbSession
+) -> None:
+    try:
+        await delete_federated_credential(db, await load_caller(db, user), identity_id, credential_id)
+    except (IdentityError, FederatedCredentialError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None

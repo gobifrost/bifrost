@@ -91,6 +91,74 @@ async def _parse(rp: OIDCRelyingParty, token: str, nonce: str = "nonce-1") -> di
     )
 
 
+async def _parse_workload(rp: OIDCRelyingParty, token: str) -> dict:
+    return await rp.parse_verified_workload_token(token)
+
+
+def _workload_rp(provider: JwksProvider) -> OIDCRelyingParty:
+    return _rp(
+        provider,
+        claims_options={
+            "iss": {"essential": True, "value": ISSUER},
+            "aud": {"essential": True, "values": [CLIENT_ID]},
+            "sub": {"essential": True},
+            "exp": {"essential": True},
+            "iat": {"essential": True},
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_workload_jwt_accepts_github_immutable_subject_without_browser_nonce():
+    key = _private_key()
+    provider, _ = _provider({"keys": [_jwk(key, "key-1")]})
+    rp = _workload_rp(provider)
+    subject = "repo:jackmusick@6733569/bifrost-git-acceptance@1399040965:ref:refs/heads/main"
+    external_claims = _claims(sub=subject)
+    external_claims.pop("nonce")
+
+    claims = await _parse_workload(rp, _token(key, external_claims))
+
+    assert claims["sub"] == subject
+
+
+@pytest.mark.asyncio
+async def test_workload_access_jwt_does_not_apply_browser_azp_or_nonce_rules():
+    key = _private_key()
+    provider, _ = _provider({"keys": [_jwk(key, "key-1")]})
+    rp = _workload_rp(provider)
+    external_claims = _claims(azp="managed-identity-client-id")
+    external_claims.pop("nonce")
+
+    claims = await _parse_workload(rp, _token(key, external_claims))
+
+    assert claims["azp"] == "managed-identity-client-id"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("overrides", [{"iss": "https://wrong.example"}, {"aud": "wrong"}, {"exp": int(time.time()) - 1}, {"iat": int(time.time()) + 1_000_000}])
+async def test_workload_jwt_rejects_wrong_issuer_audience_or_time(overrides: dict[str, object]):
+    key = _private_key()
+    provider, _ = _provider({"keys": [_jwk(key, "key-1")]})
+    rp = _workload_rp(provider)
+
+    with pytest.raises(IDTokenValidationError):
+        await _parse_workload(rp, _token(key, _claims(**overrides)))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["exp", "iat"])
+async def test_workload_profile_requires_expiry_and_issued_at(missing: str):
+    key = _private_key()
+    provider, _ = _provider({"keys": [_jwk(key, "key-1")]})
+    rp = _workload_rp(provider)
+    external_claims = _claims()
+    external_claims.pop(missing)
+
+    with pytest.raises(IDTokenValidationError):
+        await _parse_workload(rp, _token(key, external_claims))
+
+
 @pytest.mark.asyncio
 async def test_valid_id_token_is_accepted_with_verified_claims():
     key = _private_key()

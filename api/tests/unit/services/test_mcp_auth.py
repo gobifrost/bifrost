@@ -9,12 +9,15 @@ Tests the BifrostAuthProvider class which implements OAuth 2.1 for MCP:
 Uses mocked dependencies for fast, isolated testing.
 """
 
+import base64
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from src.core.security import create_access_token
+from src.models.orm.federated_credentials import FederatedCredential
 from src.services.mcp_server.auth import (
     BifrostAuthProvider,
     create_bifrost_auth_provider,
@@ -22,6 +25,7 @@ from src.services.mcp_server.auth import (
 
 
 from shared.mcp_oauth import _mcp_auth_code_key, _mcp_state_key
+from tests.unit.authorization.committed_runs import committed_world
 
 # ==================== Fixtures ====================
 
@@ -271,3 +275,89 @@ async def test_legacy_human_token_cannot_authenticate_mcp(auth_provider, regular
     with patch.object(auth_provider, "_check_mcp_access", new_callable=AsyncMock) as access:
         assert await auth_provider.verify_token(regular_user_access_token) is None
     access.assert_not_awaited()
+
+
+def _unsigned_assertion(issuer: str, audience: str, subject: str) -> str:
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"iss": issuer, "aud": audience, "sub": subject}).encode()
+    ).rstrip(b"=").decode()
+    return f"header.{payload}.signature"
+
+
+async def test_token_exchange_mints_a_revision_bound_access_only_workload_token(
+    async_engine, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The actual ``/token`` handler calls the shared minter and never issues refresh state."""
+    from src.core.security import decode_token
+    from src.core.rate_limit import auth_limiter
+    from src.services.authorization.tokens import authenticate_workload_token, parse_workload_claims
+    from src.services import workload_federation
+
+    issuer = "https://issuer.example"
+    audience = "https://bifrost.example"
+    subject = "immutable-external-subject"
+    assertion = _unsigned_assertion(issuer, audience, subject)
+
+    async def verified(_profile, _assertion: str) -> dict[str, object]:
+        return {"iss": issuer, "aud": audience, "sub": subject, "exp": 2_000_000_000, "iat": 1}
+
+    monkeypatch.setattr(workload_federation, "verify_profile_assertion", verified)
+    monkeypatch.setattr(auth_limiter, "check", AsyncMock())
+
+    async with committed_world(async_engine) as world:
+        identity = await world.person(await world.organization())
+        identity.identity_kind = "custom"
+        credential = FederatedCredential(
+            identity_id=identity.id,
+            name="External",
+            issuer=issuer,
+            audience=audience,
+            subject=subject,
+            subject_token_type="urn:ietf:params:oauth:token-type:id_token",
+        )
+        world.session.add(credential)
+        await world.session.flush()
+        await world.session.commit()
+
+        request = MagicMock()
+        request.headers = {}
+        request.client = None
+        request.form = AsyncMock(return_value={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": assertion,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+        })
+        first = await BifrostAuthProvider(base_url="http://test")._token(request)
+        body = json.loads(first.body)
+        payload = decode_token(body["access_token"], expected_type="access")
+        assert payload is not None
+        claims = parse_workload_claims(payload)
+        assert claims is not None
+        assert body.get("refresh_token") is None
+        assert claims.fed.id == credential.id
+        assert claims.fed.rev == credential.revision
+
+        # A configuration edit after assertion validation changes the revision;
+        # the old mint/credential cannot survive either the epoch or liveness check.
+        credential.token_ttl_seconds = 301
+        credential.revision += 1
+        await world.session.commit()
+        stale = await authenticate_workload_token(world.session, claims)
+
+        replacement = await BifrostAuthProvider(base_url="http://test")._token(request)
+        replacement_payload = decode_token(json.loads(replacement.body)["access_token"], expected_type="access")
+        assert replacement_payload is not None
+        replacement_claims = parse_workload_claims(replacement_payload)
+        assert replacement_claims is not None
+
+        credential.enabled = False
+        await world.session.commit()
+        disabled = await BifrostAuthProvider(base_url="http://test")._token(request)
+        revoked = await authenticate_workload_token(world.session, replacement_claims)
+
+    assert first.status_code == 200
+    assert stale.principal is None
+    assert replacement.status_code == 200
+    assert disabled.status_code == 400
+    assert json.loads(disabled.body)["error"] == "invalid_grant"
+    assert revoked.principal is None
