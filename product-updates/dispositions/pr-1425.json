@@ -1,0 +1,13 @@
+{
+  "key": "pr:1425",
+  "classification": "other",
+  "entry_ids": [],
+  "reason": "Native provider infrastructure is part of the pending Cloudflare setup delivery; its grouped announcement remains deferred until qualification and exact prose approval.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1425",
+      "Provider correctness checks are local-only; real Cloudflare qualification and grouped setup announcement approval remain pending. Thomas Bray retains contributor credit."
+    ]
+  }
+}

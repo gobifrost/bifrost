@@ -1,0 +1,92 @@
+{
+  "source_sha": "7b1601c4a",
+  "worker_version": "v2.0.0-122-g7b1601c4a",
+  "provider_application_observation": "5e606a114",
+  "image": {
+    "source_digest": "sha256:cc9f4a66f4c264d843db6c54581437acadbab0c0ca1807c10a268c60a475faf7",
+    "published_digest": "sha256:de47a07e6f5be34736e1b910ba76ac0f0cc0b8ca1f1918f29ae2ba512bce7df3",
+    "registry_readback_confirmed": true
+  },
+  "qualification": {
+    "status": "narrow native-agent transport qualification succeeded",
+    "successful_paths": [
+      "simple cycle 0 with automatic summary",
+      "simple cycle 1 with automatic summary",
+      "chat response",
+      "tool-bearing run with automatic summary",
+      "Code Mode run_code with nested workflow result and automatic summary"
+    ],
+    "code_mode": {
+      "run_id": "8ec8960a-1996-4cb7-9f63-c35494d490c5",
+      "execution_id": "b767f451-b7da-425b-8ac5-8e6a3b454fd7",
+      "canonical_evidence": "framework run_code is recorded in llm_response.content.tool_calls, not as a separate business tool_call step",
+      "validated_against_retained_paid_receipt": true,
+      "model_rerun": false
+    },
+    "fixture_assertion_disposition": {
+      "run_id": "6c2fff16-d7b1-44c8-999d-b33e1f6e53a0",
+      "cause": "native model returned nonempty typed prose rather than the exact requested phrase",
+      "retained_paid_receipt": true,
+      "model_rerun": false,
+      "qualified": "typed nonempty output with independent infrastructure receipts",
+      "not_qualified": "prompt fidelity"
+    }
+  },
+  "caller_observations_seconds": {
+    "simple_cycle_1_including_summary": 6.838756,
+    "tool_bearing_run": 11.224,
+    "code_mode_including_new_incarnation_bootstrap": 24.713299,
+    "interpretation": "Individual cloud-path observations, not a latency distribution or performance comparison."
+  },
+  "native_usage": {
+    "usage_rows": 11,
+    "provider_reported_total_usd": "0.021947",
+    "worker_claims": 9,
+    "interpretation": "Provider-reported usage, not an invoice or billed total."
+  },
+  "application_jobs": {
+    "compute_capability": "app.compile.v2",
+    "deploy": {
+      "job_id": "0f76cfc8-9c44-4b61-8a87-7cfbffba45bd",
+      "status": "succeeded",
+      "caller_seconds": 24.443386
+    },
+    "sdk_update": {
+      "job_id": "275377aa-f4dc-4936-8fb3-6b4a7325ff4e",
+      "status": "succeeded",
+      "caller_seconds": 11.975883
+    },
+    "cost_interpretation": "App-job costs are not established by the native provider-usage total."
+  },
+  "physical_lifetime": {
+    "successful_incarnations": "two sequential physical incarnations",
+    "first_successful_worker_id": "790643c8-a50f-481d-8c28-6eeb179eb14f",
+    "second_successful_worker_id": "cf6747cb-0f18-4b14-8896-5f9a151325f0",
+    "first_container_started_event_observed": true,
+    "second_container_started_event_observed": false,
+    "successful_workers_retired_idle_and_resource_deletion_confirmed": true,
+    "phase_four_lost_worker_id": "315186a8-e755-4b33-b5f5-213a961bfd2c",
+    "phase_four_lost_worker_resource_deletion_confirmed": true,
+    "not_established": [
+      "cumulative physical-singleton invariant",
+      "two-worker concurrent scale-out"
+    ]
+  },
+  "evidence": [
+    "agent-observations.jsonl",
+    "native-canonical-readback.json",
+    "deploy-job.json",
+    "sdk-update-job.json",
+    "code-mode-receipt-validation.json",
+    "output-assertion-disposition.json",
+    "image-http-probe.json",
+    "instances-after-idle.json",
+    "instances-after-native.json"
+  ],
+  "limitations": [
+    "No delegation behavior qualification.",
+    "No cancellation or fault-recovery qualification.",
+    "No sustained-load, production-sizing, invoice, or billing-total claim.",
+    "No production onboarding or UI qualification."
+  ]
+}

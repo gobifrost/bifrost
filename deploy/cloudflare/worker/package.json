@@ -1,0 +1,8 @@
+{
+  "name": "bifrost-worker-capacity",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test capacity.test.mjs"
+  }
+}

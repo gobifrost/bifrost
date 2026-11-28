@@ -1,0 +1,520 @@
+{
+  "phase": "workflow-and-service-only; app builds and agents not qualified",
+  "worker": {
+    "source_sha": "aca740706a282226c05bcd77bc4f01142e521075",
+    "worker_version": "v2.0.0-107-gaca740706",
+    "local_image_id": "sha256:210b730805bc84044a1a7d6ccc3c73eafa92345b3f4616b12fdf00af8abf0577"
+  },
+  "api_base_sha": "fb907f74f35a047b1b44ebf074128e7bd836793b",
+  "api_followup_commit": "f5b33a47f",
+  "topology": "Caller on host -> local API through NetBird EU relay; Cloudflare workers in Virginia -> same API relay. Not comparable to local workflow regression results.",
+  "provider": {
+    "name": "bifrost-spike-1400-b3f92134",
+    "scope": "bifrost-spike-1400-b3f92134:capacity-v1",
+    "application_id": "a035a0fd-2056-496c-9d19-0c4a959d7ed6",
+    "application_deleted_at_utc": "2026-11-14T18:53:27.458952+00:00",
+    "remaining_resources": "Worker script, Durable Object namespaces and registry image retained for subsequent qualification; container application deleted."
+  },
+  "samples": [
+    {
+      "kind": "echo",
+      "cycle": 0,
+      "caller_ms": 1521.7680297791958,
+      "body_ms": 0.06705999999212509,
+      "status": "Success",
+      "execution_id": "78fbb6a4-0660-4fe1-b4e7-694953800c0c",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "78fbb6a4-0660-4fe1-b4e7-694953800c0c",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:34:55.179852Z",
+        "completed_at": "2026-11-14T18:34:56.167719Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 1,
+      "caller_ms": 1436.3159704953432,
+      "body_ms": 0.05168999996385537,
+      "status": "Success",
+      "execution_id": "386d6c5f-62d7-413e-964a-912308b6b7e3",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "386d6c5f-62d7-413e-964a-912308b6b7e3",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:34:57.123142Z",
+        "completed_at": "2026-11-14T18:34:58.062142Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 2,
+      "caller_ms": 1458.0048071220517,
+      "body_ms": 0.06902000018271792,
+      "status": "Success",
+      "execution_id": "44a11c55-71de-4a10-8fe4-8232f5de79d6",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "44a11c55-71de-4a10-8fe4-8232f5de79d6",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:34:59.035706Z",
+        "completed_at": "2026-11-14T18:34:59.986024Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 3,
+      "caller_ms": 1452.1465692669153,
+      "body_ms": 0.06568899993908417,
+      "status": "Success",
+      "execution_id": "8fec9c11-c99e-44c8-8a9a-148562656a30",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "8fec9c11-c99e-44c8-8a9a-148562656a30",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:00.963022Z",
+        "completed_at": "2026-11-14T18:35:01.908604Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 4,
+      "caller_ms": 1367.933962494135,
+      "body_ms": 0.06962999987081275,
+      "status": "Success",
+      "execution_id": "49f6cd10-fd0a-4e71-8add-5d29e2173187",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "49f6cd10-fd0a-4e71-8add-5d29e2173187",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:02.875050Z",
+        "completed_at": "2026-11-14T18:35:03.746145Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 5,
+      "caller_ms": 1436.1327392980456,
+      "body_ms": 0.059469999996508704,
+      "status": "Success",
+      "execution_id": "d0a449e3-7b28-4741-8ff8-581c16bf463c",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "d0a449e3-7b28-4741-8ff8-581c16bf463c",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:04.686095Z",
+        "completed_at": "2026-11-14T18:35:05.637122Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 6,
+      "caller_ms": 1371.885310858488,
+      "body_ms": 0.06796000002395886,
+      "status": "Success",
+      "execution_id": "2ae3dfd1-bc14-405a-b05b-6385afad50c2",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "2ae3dfd1-bc14-405a-b05b-6385afad50c2",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:06.573447Z",
+        "completed_at": "2026-11-14T18:35:07.456322Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 7,
+      "caller_ms": 1425.1318778842688,
+      "body_ms": 0.05806900003335613,
+      "status": "Success",
+      "execution_id": "810b2e00-12d3-4971-a463-ad3a3f7b1d50",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "810b2e00-12d3-4971-a463-ad3a3f7b1d50",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:08.453119Z",
+        "completed_at": "2026-11-14T18:35:09.358029Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 8,
+      "caller_ms": 1438.799513503909,
+      "body_ms": 0.06198000005497306,
+      "status": "Success",
+      "execution_id": "4ac44db5-6b57-4a63-983c-019c6799a066",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "4ac44db5-6b57-4a63-983c-019c6799a066",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:10.314837Z",
+        "completed_at": "2026-11-14T18:35:11.252178Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 9,
+      "caller_ms": 1381.4702508971095,
+      "body_ms": 0.06097099981161591,
+      "status": "Success",
+      "execution_id": "51eceff2-6e0c-4b34-bb38-05a064420e8e",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "51eceff2-6e0c-4b34-bb38-05a064420e8e",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:12.212767Z",
+        "completed_at": "2026-11-14T18:35:13.094295Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "echo",
+      "cycle": 10,
+      "caller_ms": 1417.7715564146638,
+      "body_ms": 0.05860999999640626,
+      "status": "Success",
+      "execution_id": "34447cdb-5d5b-4708-8f4c-f92e3c308f26",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "34447cdb-5d5b-4708-8f4c-f92e3c308f26",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:14.041048Z",
+        "completed_at": "2026-11-14T18:35:14.973005Z",
+        "duration_ms": 1,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 0,
+      "caller_ms": 1981.6797086969018,
+      "body_ms": 601.0722920000262,
+      "status": "Success",
+      "execution_id": "5e474569-402b-4861-afdc-fe16f29882a5",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "5e474569-402b-4861-afdc-fe16f29882a5",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:15.917412Z",
+        "completed_at": "2026-11-14T18:35:17.398673Z",
+        "duration_ms": 602,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 1,
+      "caller_ms": 2000.4184637218714,
+      "body_ms": 558.6338959999466,
+      "status": "Success",
+      "execution_id": "4d0fa721-d6c7-4165-aed5-37dbb19d78aa",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "4d0fa721-d6c7-4165-aed5-37dbb19d78aa",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:18.363252Z",
+        "completed_at": "2026-11-14T18:35:19.871714Z",
+        "duration_ms": 560,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 2,
+      "caller_ms": 1953.0666591599584,
+      "body_ms": 571.4501770000879,
+      "status": "Success",
+      "execution_id": "eb408ad2-8afb-4133-84a5-e97c22403526",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "eb408ad2-8afb-4133-84a5-e97c22403526",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:20.817361Z",
+        "completed_at": "2026-11-14T18:35:22.273605Z",
+        "duration_ms": 572,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 3,
+      "caller_ms": 2065.5051097273827,
+      "body_ms": 623.1592609999552,
+      "status": "Success",
+      "execution_id": "94669063-0e51-4ab0-af87-4ed48a4f9ea7",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "94669063-0e51-4ab0-af87-4ed48a4f9ea7",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:23.236410Z",
+        "completed_at": "2026-11-14T18:35:24.808309Z",
+        "duration_ms": 624,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 4,
+      "caller_ms": 1929.2061142623425,
+      "body_ms": 563.5900899999342,
+      "status": "Success",
+      "execution_id": "96c3b3fb-41d8-4043-bf7a-93e586fee738",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "96c3b3fb-41d8-4043-bf7a-93e586fee738",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:25.745086Z",
+        "completed_at": "2026-11-14T18:35:27.188570Z",
+        "duration_ms": 564,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 5,
+      "caller_ms": 1985.1914020255208,
+      "body_ms": 621.8987800000377,
+      "status": "Success",
+      "execution_id": "937ef81d-608e-4868-bbab-2949561272fd",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "937ef81d-608e-4868-bbab-2949561272fd",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:28.135339Z",
+        "completed_at": "2026-11-14T18:35:29.622306Z",
+        "duration_ms": 623,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 6,
+      "caller_ms": 2065.378741361201,
+      "body_ms": 626.6707340000721,
+      "status": "Success",
+      "execution_id": "feed16f6-9fdf-4035-9cba-fdb574bbb9bf",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "feed16f6-9fdf-4035-9cba-fdb574bbb9bf",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:30.572064Z",
+        "completed_at": "2026-11-14T18:35:32.150014Z",
+        "duration_ms": 627,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 7,
+      "caller_ms": 1987.4757779762149,
+      "body_ms": 561.8576080000821,
+      "status": "Success",
+      "execution_id": "8e75abff-e9e1-4aae-a95f-7a5897cb2a61",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "8e75abff-e9e1-4aae-a95f-7a5897cb2a61",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:33.100494Z",
+        "completed_at": "2026-11-14T18:35:34.603683Z",
+        "duration_ms": 563,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 8,
+      "caller_ms": 1930.8904213830829,
+      "body_ms": 550.8371299999908,
+      "status": "Success",
+      "execution_id": "be4d9e84-9030-4cea-b86f-c307933458c7",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "be4d9e84-9030-4cea-b86f-c307933458c7",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:35.552438Z",
+        "completed_at": "2026-11-14T18:35:36.994871Z",
+        "duration_ms": 552,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 9,
+      "caller_ms": 2050.39129499346,
+      "body_ms": 641.3317669998833,
+      "status": "Success",
+      "execution_id": "156abfb0-40ab-4314-ad2f-c567a40560ec",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "156abfb0-40ab-4314-ad2f-c567a40560ec",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:37.938430Z",
+        "completed_at": "2026-11-14T18:35:39.498500Z",
+        "duration_ms": 642,
+        "worker_id": null
+      }
+    },
+    {
+      "kind": "sdk",
+      "cycle": 10,
+      "caller_ms": 1948.023846372962,
+      "body_ms": 577.2177619999184,
+      "status": "Success",
+      "execution_id": "4ce0b56b-1dc1-4674-9844-afaef96f01b9",
+      "worker_hostname": "cf-04f430b9-1836-4d44-a705-1b51b38a576e",
+      "platform_credentials_present": false,
+      "used_socket": false,
+      "timestamps": {
+        "execution_id": "4ce0b56b-1dc1-4674-9844-afaef96f01b9",
+        "status": "Success",
+        "created_at": null,
+        "started_at": "2026-11-14T18:35:40.459879Z",
+        "completed_at": "2026-11-14T18:35:41.905333Z",
+        "duration_ms": 578,
+        "worker_id": null
+      }
+    }
+  ],
+  "summary": {
+    "echo": {
+      "warm_n": 10,
+      "caller_p50_ms": 1430.6323085911572,
+      "caller_p95_ms": 1458.0048071220517,
+      "body_p50_ms": 0.061475499933294486
+    },
+    "sdk": {
+      "warm_n": 10,
+      "caller_p50_ms": 1986.3335900008678,
+      "caller_p95_ms": 2065.5051097273827,
+      "body_p50_ms": 574.3339695000031
+    }
+  },
+  "scale_out": {
+    "service_worker": "04f430b9-1836-4d44-a705-1b51b38a576e",
+    "workflow_worker": "c4a6d62b-0e6d-4d1f-93ff-0dc2e2f44110",
+    "caller_to_completed_seconds": 10.592987028881907,
+    "synthetic_memory_reservation_mib": 2048,
+    "actual_memory_allocation": false,
+    "physical_instances": [
+      {
+        "id": "d0346cfc-8b6e-49dc-9863-8d763290e3a8",
+        "location": "iad20",
+        "health": "running"
+      },
+      {
+        "id": "d0309272-5826-49e7-afe8-092d08d407e8",
+        "location": "iad22",
+        "health": "running"
+      }
+    ],
+    "durable_object_bindings": [
+      {
+        "worker": "c4a6d62b-0e6d-4d1f-93ff-0dc2e2f44110",
+        "deployment_id": "d0346cfc-8b6e-49dc-9863-8d763290e3a8"
+      },
+      {
+        "worker": "04f430b9-1836-4d44-a705-1b51b38a576e",
+        "deployment_id": "d0309272-5826-49e7-afe8-092d08d407e8"
+      }
+    ]
+  },
+  "reconnect": {
+    "fault_at": "2026-11-14T18:39:03.317757+00:00",
+    "control_outage_seconds": 15,
+    "workflow_worker": "c4a6d62b-0e6d-4d1f-93ff-0dc2e2f44110",
+    "before_service_attempt": "c5dbe051-44fe-478e-a4c3-a8593911cd03",
+    "after_service_attempt": "c5dbe051-44fe-478e-a4c3-a8593911cd03",
+    "execution_id": "bf4f1d09-067b-4f01-8e5a-6e38b81be115",
+    "status": "Success",
+    "configuration_restored": true
+  },
+  "canonical_worker_records_at_capture": 23,
+  "limitations": [
+    "Unsupported maintenance demand caused incarnation churn in this candidate; later capability gating requires separate qualification.",
+    "No provider-crash-after-accepted-start fault was injected in this phase.",
+    "Workflow transport outage recovery is not API-process-loss recovery.",
+    "Cold launch first failed before image distribution was ready; image pull and VM startup are separate observations, not an accepted cold-to-job benchmark."
+  ]
+}
