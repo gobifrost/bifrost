@@ -25,7 +25,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 184,  # Includes four instance management commands.
         "manifest": 16,
         "mcp": 105,  # Includes four instance management tools.
-        "rest": 771,  # Adds four instance-management and six explicit SDK routes.
+        "rest": 772,  # Includes the worker instance diagnostics route.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
