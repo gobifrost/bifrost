@@ -1,0 +1,13 @@
+{
+  "key": "pr:1509",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Restore the existing pinned workflow shortcut behavior after the integration header changed, and update affected browser tests.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1509",
+      "https://github.com/gobifrost/bifrost/actions/runs/46164145064"
+    ]
+  }
+}
