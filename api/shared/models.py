@@ -329,6 +329,46 @@ class ApplicationBundleManifest(BaseModel):
     sdk_binding_api_major: int | None = Field(default=None, ge=1)
 
 
+WorkerInstanceForm = Literal["external", "job", "static"]
+
+
+class WorkerInstanceListQuery(BaseModel):
+    form: WorkerInstanceForm | None = None
+    limit: int = Field(default=25, ge=1, le=100)
+    before_created_at: AwareDatetime | None = None
+    before_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_cursor(self) -> WorkerInstanceListQuery:
+        if (self.before_created_at is None) != (self.before_id is None):
+            raise ValueError("A worker cursor requires both a timestamp and an ID")
+        return self
+
+
+class WorkerInstance(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    form: WorkerInstanceForm
+    state: str
+    capacity_scope: str | None
+    capacity_resource_uid: str | None
+    version: str | None
+    created_at: AwareDatetime
+    ended_at: AwareDatetime | None
+    end_reason: str | None
+
+
+class WorkerInstanceCursor(BaseModel):
+    before_created_at: AwareDatetime
+    before_id: UUID
+
+
+class WorkerInstancePage(BaseModel):
+    items: list[WorkerInstance]
+    next_cursor: WorkerInstanceCursor | None
+
+
 class WorkerCapacityProfile(BaseModel):
     """Capabilities of an authenticated external physical-capacity provider."""
 

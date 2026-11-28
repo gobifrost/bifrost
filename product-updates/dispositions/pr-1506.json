@@ -1,0 +1,13 @@
+{
+  "key": "pr:1506",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "See each worker’s state, build, and recorded stop reason in Diagnostics → Workers.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1506",
+      "Maintainer approved the exact release summary in the native review conversation."
+    ]
+  }
+}

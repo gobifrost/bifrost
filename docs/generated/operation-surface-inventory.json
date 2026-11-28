@@ -11674,7 +11674,7 @@
     "cli": 184,
     "manifest": 16,
     "mcp": 105,
-    "rest": 771,
+    "rest": 772,
     "sdk": 21
   },
   "schema_version": 1,
@@ -15063,6 +15063,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/platform/workers",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/platform/workers/instances",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

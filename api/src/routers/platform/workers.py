@@ -12,12 +12,15 @@ only ever report two states in their heartbeat:
 
 import json
 import logging
+from typing import Annotated
 from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.models import WorkerInstanceListQuery, WorkerInstancePage
 
 from src.core.auth import CurrentActiveUser
 from src.core.database import get_db
@@ -43,11 +46,13 @@ from src.models.contracts.platform import (
 )
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
+from src.services.worker_pool.inventory import list_worker_instances
 
 logger = logging.getLogger(__name__)
 
 WORKER_METRICS_OPERATION = "GET /api/platform/workers/metrics"
 WORKER_STATS_OPERATION = "GET /api/platform/workers/stats"
+WORKER_INSTANCES_OPERATION = "GET /api/platform/workers/instances"
 WORKERS_LIST_OPERATION = "GET /api/platform/workers"
 WORKER_GET_OPERATION = "GET /api/platform/workers/{worker_id}"
 WORKER_PROCESS_RECYCLE_OPERATION = "POST /api/platform/workers/{worker_id}/processes/{pid}/recycle"
@@ -57,6 +62,7 @@ PLATFORM_STUCK_HISTORY_OPERATION = "GET /api/platform/stuck-history"
 _PLATFORM_OPERATION_BY_ROUTE = {
     WORKER_METRICS_OPERATION: WORKER_METRICS_OPERATION,
     WORKER_STATS_OPERATION: WORKER_STATS_OPERATION,
+    WORKER_INSTANCES_OPERATION: WORKER_INSTANCES_OPERATION,
     WORKERS_LIST_OPERATION: WORKERS_LIST_OPERATION,
     WORKER_GET_OPERATION: WORKER_GET_OPERATION,
     WORKER_PROCESS_RECYCLE_OPERATION: WORKER_PROCESS_RECYCLE_OPERATION,
@@ -104,6 +110,15 @@ async def _get_redis() -> aioredis.Redis:
 # =============================================================================
 # Static routes MUST be defined before dynamic routes (/{worker_id})
 # =============================================================================
+
+
+@router.get("/instances", response_model=WorkerInstancePage)
+async def get_worker_instances(
+    db: DbSession,
+    query: Annotated[WorkerInstanceListQuery, Query()],
+) -> WorkerInstancePage:
+    """List active and retained terminal execution worker instances."""
+    return await list_worker_instances(db, query)
 
 
 @router.get(
