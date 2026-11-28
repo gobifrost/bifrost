@@ -19,8 +19,6 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessagesTypeAdapter,
-    PartDeltaEvent,
-    PartStartEvent,
     UserContent,
 )
 from pydantic_ai.usage import RunUsage
@@ -43,14 +41,10 @@ _IMMUTABLE_INPUT_FIELDS = frozenset({
     "user_prompt", "history",
 })
 _RUNTIME_EVENT_ADAPTERS = {
-    "PartStartEvent": TypeAdapter(PartStartEvent),
-    "PartDeltaEvent": TypeAdapter(PartDeltaEvent),
     "FunctionToolCallEvent": TypeAdapter(FunctionToolCallEvent),
     "FunctionToolResultEvent": TypeAdapter(FunctionToolResultEvent),
 }
 _RUNTIME_EVENT_TYPES = (
-    PartStartEvent,
-    PartDeltaEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
 )
@@ -146,11 +140,10 @@ def _validate_init(frame: Any, worker_id: str) -> dict[str, Any]:
 
 
 def encode_runtime_event(event: Any) -> dict[str, Any]:
-    """Serialize only the four chat events the API consumer understands."""
+    """Serialize worker-owned tool events; model text stays at the API."""
     event_type = type(event).__name__
     adapter = _RUNTIME_EVENT_ADAPTERS.get(event_type)
-    if adapter is None or not isinstance(event, (PartStartEvent, PartDeltaEvent,
-                                                 FunctionToolCallEvent, FunctionToolResultEvent)):
+    if adapter is None or not isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent)):
         raise AgentComputeError("Agent compute attempted to emit an unsupported runtime event")
     return {"event_type": event_type, "event": adapter.dump_python(event, mode="json")}
 

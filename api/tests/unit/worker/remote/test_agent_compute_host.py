@@ -296,13 +296,9 @@ async def test_chat_event_ack_waits_for_consumer_advance_then_returns_terminal_r
     host = runtime(runtime_plan, bridge, stage_binding, model)
 
     async with host.run_stream_events("go") as events:
-        event = rpc(
-            host._bound_binding(),
-            str(uuid4()),
-            "runtime_event",
-            encode_runtime_event(PartStartEvent(index=0, part=TextPart("first"))),
-        )
-        pending = asyncio.create_task(host.handle_rpc(event))
+        pending = asyncio.create_task(host._publish_runtime_event(
+            PartStartEvent(index=0, part=TextPart("first"))
+        ))
         received = await anext(events)
         assert isinstance(received, PartStartEvent)
         assert not pending.done()
@@ -320,7 +316,7 @@ async def test_chat_event_ack_waits_for_consumer_advance_then_returns_terminal_r
         assert final.result.output == "done"
         await pending
 
-    assert bridge.replies[-1]["reply_frame"]["result"] is None
+    assert not bridge.replies
 
 
 @pytest.mark.asyncio
@@ -498,10 +494,9 @@ async def test_chat_stream_keeps_one_terminal_watch_across_ui_events():
     try:
         async with asyncio.timeout(5), host.run_stream_events("go") as events:
             for index in range(3):
-                callbacks.append(asyncio.create_task(host.handle_rpc(rpc(
-                    host._bound_binding(), str(uuid4()), "runtime_event",
-                    encode_runtime_event(PartStartEvent(index=index, part=TextPart(str(index)))),
-                ))))
+                callbacks.append(asyncio.create_task(host._publish_runtime_event(
+                    PartStartEvent(index=index, part=TextPart(str(index)))
+                )))
                 assert isinstance(await anext(events), PartStartEvent)
                 if index == 0:
                     status_reads = bridge.calls.count("agent_compute_status")
@@ -592,3 +587,155 @@ async def test_invalid_confirmed_start_reply_fails_without_status_fallback():
         await host._start("go", [])
     assert not host._started
     assert bridge.calls == ["agent_compute_status", "agent_compute_start"]
+
+
+@pytest.mark.asyncio
+async def test_model_text_streams_once_from_api_without_token_callback_journal_entries():
+    async def fragments(_messages, _info):
+        for _ in range(200):
+            yield "part-"
+
+    model = FunctionModel(stream_function=fragments, model_name="api-model")
+    runtime_plan = plan(surface="chat")
+    stage_binding = binding_for(runtime_plan, model)
+    bridge = Bridge(stage_binding)
+    host = runtime(runtime_plan, bridge, stage_binding, model)
+    requests = []
+
+    async def produce():
+        event = rpc(
+            host._bound_binding(), str(uuid4()), "model_stream",
+            {"payload_b64": base64.b64encode(model_payload()).decode()}, stream=True,
+        )
+        requests.append(event)
+        await host.handle_rpc(event)
+        bridge.status["terminal"] = {
+            "ok": True,
+            "result": {"output": "part-" * 200, "usage": asdict(host.usage), "empty_output_guard": None},
+        }
+        host.handle_state({"event": "agent_compute_state", **host._bound_binding()})
+
+    from pydantic_ai.messages import PartDeltaEvent
+    text = []
+    async with asyncio.timeout(5), host.run_stream_events("go") as events:
+        producer = asyncio.create_task(produce())
+        try:
+            async for event in events:
+                if isinstance(event, PartStartEvent):
+                    text.append(event.part.content)
+                elif isinstance(event, PartDeltaEvent):
+                    text.append(event.delta.content_delta)
+            await producer
+        finally:
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+    assert "".join(text) == "part-" * 200
+    assert len(host._receipts) == 1
+    assert len(bridge.replies) >= 200
+    delivered = len(bridge.replies)
+    await host.handle_rpc(requests[0])
+    assert len(bridge.replies) == 2 * delivered
+    assert host._events.empty(), "Reply replay must not republish UI text"
+    assert host.usage.requests == 1
+
+
+def test_worker_cannot_echo_api_model_text_as_a_runtime_callback():
+    from src.worker.remote.agent_compute import AgentComputeError
+    with pytest.raises(AgentComputeError, match="unsupported runtime event"):
+        encode_runtime_event(PartStartEvent(index=0, part=TextPart("owned by API")))
+
+
+@pytest.mark.asyncio
+async def test_full_callback_journal_delivers_bounded_refusal_without_another_effect():
+    calls = 0
+    def respond(*_):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(parts=[TextPart("done")])
+
+    model = FunctionModel(respond)
+    runtime_plan = replace(plan(), max_requests=256)
+    stage_binding = binding_for(runtime_plan, model)
+    bridge = Bridge(stage_binding)
+    host = runtime(runtime_plan, bridge, stage_binding, model)
+    await host._start("go", [])
+    for _ in range(128):
+        await host.handle_rpc(rpc(
+            host._bound_binding(), str(uuid4()), "model_request",
+            {"payload_b64": base64.b64encode(model_payload()).decode()},
+        ))
+    assert calls == 128
+    retained = len(host._receipts)
+    for _ in range(2):
+        request_id = str(uuid4())
+        await host.handle_rpc(rpc(
+            host._bound_binding(), request_id, "model_request",
+            {"payload_b64": base64.b64encode(model_payload()).decode()},
+        ))
+        assert bridge.replies[-1]["request_id"] == request_id
+        assert bridge.replies[-1]["reply_frame"] == {
+            "error_type": "RemoteAgentRuntimeError", "error": "Agent compute RPC journal is full",
+        }
+    assert len(host._receipts) == retained
+    assert calls == 128
+
+    request_id = str(uuid4())
+    await host.handle_rpc(rpc(
+        host._bound_binding(), request_id, "model_stream",
+        {"payload_b64": base64.b64encode(model_payload()).decode()}, stream=True,
+    ))
+    assert bridge.replies[-1]["reply_frame"] == {
+        "error_type": "RemoteAgentRuntimeError", "error": "Agent compute RPC journal is full",
+        "sequence": 0, "final": True,
+    }
+    assert calls == 128
+
+
+@pytest.mark.asyncio
+async def test_model_stream_failure_is_a_sequenced_terminal_reply():
+    async def failing_stream(_messages, _info):
+        yield "partial"
+        raise RuntimeError("fixture provider failed")
+
+    model = FunctionModel(stream_function=failing_stream)
+    runtime_plan = plan()
+    stage_binding = binding_for(runtime_plan, model)
+    bridge = Bridge(stage_binding)
+    host = runtime(runtime_plan, bridge, stage_binding, model)
+    await host._start("go", [])
+    await host.handle_rpc(rpc(
+        host._bound_binding(), str(uuid4()), "model_stream",
+        {"payload_b64": base64.b64encode(model_payload()).decode()}, stream=True,
+    ))
+    frames = [row["reply_frame"] for row in bridge.replies]
+    assert len(frames) > 1
+    assert [frame["sequence"] for frame in frames] == list(range(len(frames)))
+    assert frames[-1] == {
+        "error_type": "RuntimeError", "error": "fixture provider failed",
+        "sequence": len(frames) - 1, "final": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_consumed_response_budget_keeps_space_for_a_terminal_error():
+    from src.worker.remote.compute_stage_host import (
+        MAX_AGENT_COMPUTE_ERROR_RESERVE_BYTES, MAX_AGENT_COMPUTE_JOURNAL_BYTES,
+    )
+    model = FunctionModel(lambda *_: ModelResponse(parts=[TextPart("done")]))
+    runtime_plan = plan()
+    stage_binding = binding_for(runtime_plan, model)
+    bridge = Bridge(stage_binding)
+    host = runtime(runtime_plan, bridge, stage_binding, model)
+    await host._start("go", [])
+    # Model previously retained responses, without allocating64MiB in a unit test.
+    host._journal_bytes = MAX_AGENT_COMPUTE_JOURNAL_BYTES - MAX_AGENT_COMPUTE_ERROR_RESERVE_BYTES
+    await host.handle_rpc(rpc(
+        host._bound_binding(), str(uuid4()), "model_request",
+        {"payload_b64": base64.b64encode(model_payload()).decode()},
+    ))
+    assert bridge.replies[-1]["reply_frame"] == {
+        "error_type": "RemoteAgentRuntimeError",
+        "error": "Agent compute RPC journal byte limit is reached",
+    }
+    assert host._journal_bytes <= MAX_AGENT_COMPUTE_JOURNAL_BYTES
+    assert next(iter(host._receipts.values())).complete
