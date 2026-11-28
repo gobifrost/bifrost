@@ -12,8 +12,6 @@ import asyncio
 import base64
 import contextlib
 import json
-import os
-import signal
 import shutil
 import tempfile
 import time
@@ -31,6 +29,7 @@ from shared.worker_transfer import (
     ReceivedFileTransfer,
 )
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
+from src.worker.remote.process_cleanup import kill_process_group
 
 
 MAX_ACTIVE_STAGES = 4
@@ -160,29 +159,6 @@ async def spawn_child(*args: Any, **kwargs: Any) -> _Process:
     return await asyncio.create_subprocess_exec(*args, **kwargs)
 
 
-async def kill_process_group(process: _Process) -> None:
-    if process.pid is None:
-        return
-    if process.returncode is None:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        try:
-            await asyncio.wait_for(process.wait(), 5)
-        except TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            await process.wait()
-    # The primary subprocess has already been reaped by asyncio. When this
-    # launcher is PID 1 (or a subreaper), terminated recipe grandchildren are
-    # adopted here. Reap only this operation's new-session process group;
-    # waitpid(-1) would steal exit statuses from templates and other jobs.
-    while True:
-        try:
-            reaped, _status = os.waitpid(-process.pid, os.WNOHANG)
-        except ChildProcessError:
-            break
-        if reaped == 0:
-            break
 
 
 class NamedFileOperationStages:
