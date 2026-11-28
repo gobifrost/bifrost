@@ -1590,7 +1590,9 @@ class TestConsistency:
 # any call as an ``operation=`` keyword, or bound to a module-level
 # ``*_OPERATION`` name or a local ``operation`` variable (how a handler names
 # the key it passes along to a helper).
-_ENFORCE_CALLS = {"require_operation", "authorize_operation", "operation_reach", "allows_operation"}
+# The shared Identity adapter loads the target and enforces its exact
+# operation through require_operation, including organization/privilege checks.
+_ENFORCE_CALLS = {"require_operation", "authorize_operation", "operation_reach", "allows_operation", "_managed_identity"}
 _REPORT_SCOPE_HELPER = "report_scope"
 
 
@@ -2019,6 +2021,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     # grants nothing: live DB authority determines the resulting principal.
     "src.services.authorization.runtime_auth._previous_stable_engine_execution_id": (1, "credential_schema"),
     "src.services.authorization.tokens._human_principal": (2, "actor_facts"),
+    "src.services.authorization.tokens._workload_principal": (2, "actor_facts"),
     "src.services.authorization.tokens._snapshot_human_claims": (1, "current_role_derivation"),
     "src.services.authorization.tokens.parse_human_claims": (1, "current_role_derivation"),
     "src.services.authorization.tokens.principal_from_claims": (1, "actor_facts"),

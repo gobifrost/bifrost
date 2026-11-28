@@ -95,6 +95,20 @@ vi.mock("@/components/users/UserProfileForm", () => ({
 	),
 }));
 
+vi.mock("@/components/identities/FederatedCredentialsPanel", () => ({
+	FederatedCredentialsPanel: ({
+		identityId,
+		canManage,
+	}: {
+		identityId: string;
+		canManage: boolean;
+	}) => (
+		<section aria-label="Federated Credentials">
+			Credentials for {identityId}: {canManage ? "Manage" : "Read Only"}
+		</section>
+	),
+}));
+
 const identityMutations = vi.hoisted(() => ({
 	rename: vi.fn(),
 	remove: vi.fn(),
@@ -313,7 +327,9 @@ describe("UserAccessPage", () => {
 
 	it("offers the Users list's account actions, without Edit Profile", async () => {
 		const { user } = renderPage();
-		expect(screen.getByRole("button", { name: "Impersonate" })).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Impersonate" }),
+		).toBeVisible();
 
 		await user.click(
 			screen.getByRole("button", { name: "Avery Example actions" }),
@@ -746,6 +762,9 @@ describe("UserAccessPage for an identity", () => {
 			screen.getByRole("heading", { name: "Effective Access" }),
 		).toBeInTheDocument();
 		expect(screen.getByText("Role assignments editor")).toBeInTheDocument();
+		expect(
+			screen.getByRole("region", { name: "Federated Credentials" }),
+		).toHaveTextContent("Credentials for identity-1: Manage");
 	});
 
 	it("moves an identity's old Profile address to its page", () => {
@@ -781,6 +800,9 @@ describe("UserAccessPage for an identity", () => {
 			),
 		).toBeInTheDocument();
 		expect(mockUseUserAccessMap).toHaveBeenLastCalledWith(undefined);
+		expect(
+			screen.getByRole("region", { name: "Federated Credentials" }),
+		).toHaveTextContent("Read Only");
 	});
 
 	it("offers Rename and Delete on a custom identity, and returns to Identities after deleting", async () => {

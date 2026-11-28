@@ -11674,7 +11674,7 @@
     "cli": 184,
     "manifest": 16,
     "mcp": 105,
-    "rest": 772,
+    "rest": 776,
     "sdk": 21
   },
   "schema_version": 1,
@@ -14335,6 +14335,34 @@
         "method": "PATCH",
         "operation_id": "",
         "path": "/api/identities/{identity_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}/federated-credentials",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}/federated-credentials",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}/federated-credentials/{credential_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PATCH",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}/federated-credentials/{credential_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

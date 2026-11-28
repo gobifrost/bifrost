@@ -267,6 +267,80 @@ class BifrostAuthProvider:
         form = await request.form()
         grant_type = form.get("grant_type")
 
+        if grant_type == "urn:ietf:params:oauth:grant-type:token-exchange":
+            from src.core.rate_limit import auth_limiter, get_client_ip
+            from src.services.audit import emit_audit
+            from src.services.audit_context import ActorContext
+            from src.services.authorization.tokens import TokenSubjectUnavailable, WorkloadSubject, issue_access_token
+            from src.services.federated_credentials import enabled_credentials_for_exchange
+            from src.services.workload_federation import (
+                ISSUED_TOKEN_TYPE,
+                WorkloadExchangeError,
+                matching_credential,
+                validate_exchange_request,
+            )
+
+            await auth_limiter.check("workload_token_exchange", get_client_ip(request))
+            try:
+                subject_token, subject_token_type = validate_exchange_request(form)
+                async with get_db_context() as db:
+                    credential_claims = await matching_credential(
+                        await enabled_credentials_for_exchange(db, subject_token_type), subject_token
+                    )
+                    if credential_claims is None:
+                        raise WorkloadExchangeError("invalid_grant", "The subject token could not be exchanged.")
+                    credential, verified_claims = credential_claims
+                    try:
+                        issued = await issue_access_token(WorkloadSubject(credential.id, credential.revision))
+                    except TokenSubjectUnavailable as exc:
+                        raise WorkloadExchangeError("invalid_grant", "The subject token could not be exchanged.") from exc
+                    await emit_audit(
+                        db,
+                        "auth.workload_exchange.success",
+                        resource_type="federated_credential",
+                        resource_id=credential.id,
+                        details={
+                            "identity_id": str(credential.identity_id),
+                            "issuer": credential.issuer,
+                            "audience": credential.audience,
+                            "subject": verified_claims["sub"],
+                            "subject_token_type": subject_token_type,
+                            "provider_claims": {
+                                key: verified_claims[key]
+                                for key in ("repository", "ref", "environment", "workflow", "tid", "oid", "azp")
+                                if isinstance(verified_claims.get(key), str)
+                            },
+                        },
+                        actor_override=ActorContext(user_id=None, organization_id=None, source="http", surface="cli"),
+                    )
+                return JSONResponse(
+                    {
+                        "access_token": issued.token,
+                        "issued_token_type": ISSUED_TOKEN_TYPE,
+                        "token_type": "Bearer",
+                        "expires_in": max(0, int((issued.expires_at - datetime.now(timezone.utc)).total_seconds())),
+                    },
+                    headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+                )
+            except WorkloadExchangeError as exc:
+                from src.services.workload_federation import unverified_assertion_hints
+
+                subject_token = form.get("subject_token")
+                hints = unverified_assertion_hints(subject_token) if isinstance(subject_token, str) else {}
+                async with get_db_context() as db:
+                    await emit_audit(
+                        db,
+                        "auth.workload_exchange.failed",
+                        outcome="failure",
+                        details={"error": exc.error, **hints},
+                        actor_override=ActorContext(user_id=None, organization_id=None, source="http", surface="cli"),
+                    )
+                return JSONResponse(
+                    {"error": exc.error, "error_description": exc.description},
+                    status_code=400,
+                    headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+                )
+
         if grant_type == "authorization_code":
             code = form.get("code")
             redirect_uri = form.get("redirect_uri")
@@ -466,8 +540,10 @@ class BifrostAuthProvider:
         )
         from src.services.authorization.tokens import (
             authenticate_human_token,
+            authenticate_workload_token,
             authenticate_runtime_token,
             parse_human_claims,
+            parse_workload_claims,
             parse_runtime_claims,
         )
 
@@ -507,17 +583,26 @@ class BifrostAuthProvider:
             # Tool filtering follows the run user's roles, carried by the claims.
             runtime_role_names = [role.name for role in claims.usr.roles]
         else:
-            claims = parse_human_claims(payload)
-            if claims is None:
-                return None
-            async with get_db_context() as db:
-                result = await authenticate_human_token(db, claims)
-            if result.refresh_required:
-                raise _RefreshRequired()
-            if result.principal is None:
-                return None
-            runtime_principal = result.principal
-            runtime_role_names = [role.name for role in claims.usr.roles]
+            workload_claims = parse_workload_claims(payload)
+            if workload_claims is not None:
+                async with get_db_context() as db:
+                    result = await authenticate_workload_token(db, workload_claims)
+                if result.principal is None:
+                    return None
+                runtime_principal = result.principal
+                runtime_role_names = [role.name for role in workload_claims.usr.roles]
+            else:
+                claims = parse_human_claims(payload)
+                if claims is None:
+                    return None
+                async with get_db_context() as db:
+                    result = await authenticate_human_token(db, claims)
+                if result.refresh_required:
+                    raise _RefreshRequired()
+                if result.principal is None:
+                    return None
+                runtime_principal = result.principal
+                runtime_role_names = [role.name for role in claims.usr.roles]
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")
 

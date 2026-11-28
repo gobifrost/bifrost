@@ -195,7 +195,7 @@ export function Identities() {
 			<ListPageHeader
 				title="Identities"
 				titleSlot={<UsersViewTabs />}
-				description="The accounts workflows run as when no person starts them: each organization's default, the global default, and custom identities."
+				description="Accounts for unattended workflows and trusted external workloads. Roles determine what each identity can do and which organizations it can access."
 				actions={
 					<>
 						<Button

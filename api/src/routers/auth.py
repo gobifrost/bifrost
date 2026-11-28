@@ -786,6 +786,7 @@ async def start_browser_impersonation(
     """Mint a browser-wide, original-session-bound impersonation marker."""
     if (
         current_user.embed
+        or current_user.workload_credential_id is not None
         or current_user.runtime_authority is not None
         or is_browser_impersonation(current_user)
     ):

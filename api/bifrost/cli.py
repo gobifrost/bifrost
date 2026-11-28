@@ -995,6 +995,12 @@ def handle_login(args: list[str]) -> int:
     auto_open = True
     email: str | None = None
     password: str | None = None
+    oidc = False
+    subject_token_file: str | None = None
+    subject_token_type: str | None = None
+    managed_identity = False
+    managed_identity_client_id: str | None = None
+    workload_audience: str | None = None
 
     i = 0
     while i < len(args):
@@ -1021,6 +1027,36 @@ def handle_login(args: list[str]) -> int:
                 return 1
             password = args[i + 1]
             i += 2
+        elif arg == "--oidc":
+            oidc = True
+            i += 1
+        elif arg == "--subject-token-file":
+            if i + 1 >= len(args):
+                print("Error: --subject-token-file requires a value", file=sys.stderr)
+                return 1
+            subject_token_file = args[i + 1]
+            i += 2
+        elif arg == "--subject-token-type":
+            if i + 1 >= len(args):
+                print("Error: --subject-token-type requires a value", file=sys.stderr)
+                return 1
+            subject_token_type = args[i + 1]
+            i += 2
+        elif arg == "--managed-identity":
+            managed_identity = True
+            i += 1
+        elif arg == "--managed-identity-client-id":
+            if i + 1 >= len(args):
+                print("Error: --managed-identity-client-id requires a value", file=sys.stderr)
+                return 1
+            managed_identity_client_id = args[i + 1]
+            i += 2
+        elif arg == "--audience":
+            if i + 1 >= len(args):
+                print("Error: --audience requires a value", file=sys.stderr)
+                return 1
+            workload_audience = args[i + 1]
+            i += 2
         elif arg in ("--help", "-h"):
             print("""
 Usage: bifrost login [options]
@@ -1042,6 +1078,12 @@ Options:
   --no-browser, -n      Don't automatically open browser (browser mode only)
   --email EMAIL         Email for ephemeral password-grant login
   --password PASSWORD   Password for ephemeral password-grant login
+  --oidc                Obtain a GitHub Actions ID token and exchange it
+  --subject-token-file FILE  Exchange an external assertion (use - for stdin)
+  --subject-token-type TYPE  id_token or access_token (required with --subject-token-file)
+  --managed-identity    Obtain an Azure managed-identity access token and exchange it
+  --managed-identity-client-id ID  Select a user-assigned Azure identity
+  --audience AUDIENCE   GitHub/Azure assertion audience/resource (not the configured token aud claim)
   --help, -h            Show this help message
 
 Examples:
@@ -1059,6 +1101,70 @@ Examples:
     if (email is None) != (password is None):
         print("Error: --email and --password must be used together", file=sys.stderr)
         return 1
+
+    # Acquisition-only options must never silently fall through into an
+    # interactive human login. They are deliberately narrow because the
+    # audience/resource is not an authorization target in Bifrost.
+    if subject_token_file is None and subject_token_type is not None:
+        print("Error: --subject-token-type requires --subject-token-file", file=sys.stderr)
+        return 1
+    if subject_token_file is not None and subject_token_type is None:
+        print("Error: --subject-token-file requires --subject-token-type", file=sys.stderr)
+        return 1
+    if managed_identity_client_id is not None and not managed_identity:
+        print("Error: --managed-identity-client-id requires --managed-identity", file=sys.stderr)
+        return 1
+    if workload_audience is not None and not (oidc or managed_identity):
+        print("Error: --audience requires --oidc or --managed-identity", file=sys.stderr)
+        return 1
+    if subject_token_type is not None and (oidc or managed_identity):
+        print("Error: --subject-token-type is only valid with --subject-token-file", file=sys.stderr)
+        return 1
+
+    workload_modes = sum(bool(value) for value in (oidc, subject_token_file, managed_identity))
+    if workload_modes > 1 or (workload_modes and (email is not None or password is not None)):
+        print("Error: select exactly one login mode", file=sys.stderr)
+        return 1
+    if workload_modes:
+        if not api_url:
+            api_url = credentials.resolve_environment_url()
+        if not api_url:
+            print("Error: workload login requires --url or BIFROST_API_URL", file=sys.stderr)
+            return 1
+        try:
+            from bifrost.workload_login import (
+                ACCESS_TOKEN_TYPE,
+                ID_TOKEN_TYPE,
+                exchange_subject_token,
+                fetch_azure_managed_identity_token,
+                fetch_github_oidc_token,
+            )
+
+            audience = workload_audience or api_url.rstrip("/")
+            if oidc:
+                assertion, assertion_type = asyncio.run(fetch_github_oidc_token(audience)), ID_TOKEN_TYPE
+            elif managed_identity:
+                assertion, assertion_type = asyncio.run(fetch_azure_managed_identity_token(audience, managed_identity_client_id)), ACCESS_TOKEN_TYPE
+            else:
+                assert subject_token_file is not None
+                assertion = sys.stdin.read() if subject_token_file == "-" else pathlib.Path(subject_token_file).read_text(encoding="utf-8")
+                assertion = assertion.strip()
+                aliases = {"id_token": ID_TOKEN_TYPE, "access_token": ACCESS_TOKEN_TYPE}
+                assertion_type = aliases.get(subject_token_type or "", subject_token_type or "")
+                if assertion_type not in aliases.values() or not assertion:
+                    raise ValueError("--subject-token-type must be id_token or access_token and the assertion must not be empty")
+            payload = asyncio.run(exchange_subject_token(api_url, assertion, assertion_type))
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(payload["expires_in"]))
+            # Workload sessions deliberately have no refresh token. Persisting
+            # an empty value keeps the existing EnvBackend requirement for a
+            # complete human tuple unchanged.
+            credentials.save_credentials(api_url, payload["access_token"], "", expires_at.isoformat())
+            _write_env_url(api_url)
+            print("Logged in with workload federation")
+            return 0
+        except Exception as exc:
+            print(f"Workload login failed: {exc}", file=sys.stderr)
+            return 1
 
     is_password_grant = email is not None and password is not None
     environment_url = credentials.resolve_environment_url()

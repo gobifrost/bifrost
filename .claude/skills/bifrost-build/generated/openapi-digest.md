@@ -300,6 +300,10 @@
 | POST | `/api/identities` |
 | DELETE | `/api/identities/{identity_id}` |
 | PATCH | `/api/identities/{identity_id}` |
+| GET | `/api/identities/{identity_id}/federated-credentials` |
+| POST | `/api/identities/{identity_id}/federated-credentials` |
+| DELETE | `/api/identities/{identity_id}/federated-credentials/{credential_id}` |
+| PATCH | `/api/identities/{identity_id}/federated-credentials/{credential_id}` |
 | GET | `/api/identity-providers` |
 | POST | `/api/identity-providers` |
 | GET | `/api/identity-providers/domains` |

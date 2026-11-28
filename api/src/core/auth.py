@@ -30,6 +30,7 @@ from src.services.authorization.runtime_auth import (
 )
 from src.services.authorization.tokens import (
     authenticate_runtime_token, parse_runtime_claims, authenticate_human_token, parse_human_claims,
+    authenticate_workload_token, parse_workload_claims,
 )
 from shared.role_cache import get_user_roles
 
@@ -89,6 +90,9 @@ def select_http_auth_token(
     marker = request.cookies.get(IMPERSONATION_COOKIE_NAME)
     if allow_impersonation_cookie and marker:
         payload = decode_token(token, expected_type="access") if token else None
+        workload_payload = payload or (decode_expired_access_token(token) if token else None)
+        if workload_payload and parse_workload_claims(workload_payload) is not None:
+            return token
         if payload and (is_runtime_credential_payload(payload) or payload.get("embed")):
             return token
         return marker
@@ -220,6 +224,10 @@ async def _get_current_user_optional(
         return await _authenticate_runtime_payload(request, token, payload, db)
 
     if "ver" in payload:
+        workload_claims = parse_workload_claims(payload)
+        if workload_claims is not None:
+            result = await authenticate_workload_token(db, workload_claims)
+            return result.principal
         claims = parse_human_claims(payload)
         if claims is None:
             return None
@@ -370,6 +378,7 @@ async def get_original_human_user(
     )
     if user is not None and not (
         user.embed or user.runtime_authority is not None or user.impersonation_session_id is not None
+        or user.workload_credential_id is not None
     ):
         return user
 
@@ -696,6 +705,9 @@ def select_websocket_auth_token(websocket) -> str | None:
     marker = websocket.cookies.get(IMPERSONATION_COOKIE_NAME)
     if marker:
         selected_payload = decode_token(token, expected_type="access") if token else None
+        workload_payload = selected_payload or (decode_expired_access_token(token) if token else None)
+        if workload_payload and parse_workload_claims(workload_payload) is not None:
+            return token
         if not (
             selected_payload
             and (is_runtime_credential_payload(selected_payload) or selected_payload.get("embed"))
@@ -735,6 +747,11 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         return None
 
     if "ver" in payload:
+        workload_claims = parse_workload_claims(payload)
+        if workload_claims is not None:
+            from src.core.database import get_db_context
+            async with get_db_context() as db:
+                return (await authenticate_workload_token(db, workload_claims)).principal
         claims = parse_human_claims(payload)
         if claims is None:
             return None

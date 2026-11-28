@@ -98,7 +98,15 @@ def actor_from_token_payload(
         return None
 
     if "ver" in payload and "credential_kind" not in payload:
-        from src.services.authorization.tokens import parse_human_claims
+        from src.services.authorization.tokens import parse_human_claims, parse_workload_claims
+
+        workload_claims = parse_workload_claims(payload)
+        if workload_claims is not None:
+            return ActorContext(
+                user_id=workload_claims.usr.id, organization_id=workload_claims.usr.org,
+                email=workload_claims.usr.email, name=workload_claims.usr.name,
+                ip_address=ip_address, user_agent=user_agent, source="http", surface="cli",
+            )
 
         claims = parse_human_claims(payload)
         if claims is None:

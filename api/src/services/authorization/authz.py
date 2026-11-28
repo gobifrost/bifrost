@@ -31,6 +31,8 @@ from src.core.database import get_db_context
 from src.models.enums import LIVE_EXECUTION_STATUSES
 from src.models.orm.agent_runs import LIVE_AGENT_RUN_STATUSES, AgentRun
 from src.models.orm.authz import AuthzVersion
+from src.models.orm.federated_credentials import FederatedCredential
+from src.models.orm.users import User
 from src.models.orm.executions import Execution
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt
 from src.services.authorization.runtime import RuntimeKind
@@ -86,6 +88,7 @@ AUTHZ_FACTS: tuple[FactTable, ...] = (
     FactTable("user_role_boundaries", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("role_permissions", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("roles", insert=False, update=frozenset({"id", "name"}), delete=True),
+    FactTable("federated_credentials", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("workflows", insert=False, update=frozenset({"id", "solution_id", "permission_mode", "is_active"}), delete=True),
     FactTable("workflow_permission_grants", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("solution_workflow_permission_requests", insert=True, update=ANY_COLUMN, delete=True),
@@ -200,6 +203,34 @@ async def read_authority_state(
             select(AuthzVersion.version, live.label("live"))
             .select_from(AuthzVersion)
             .outerjoin(run, join)
+            .where(*_global_epoch_row())
+        )
+    ).one_or_none()
+    if row is None:
+        return AuthorityState(epoch=None, live=False)
+    return AuthorityState(epoch=row.version, live=row.live is True)
+
+
+async def read_workload_authority_state(
+    db: AsyncSession, credential_id: UUID, identity_id: UUID, revision: int
+) -> AuthorityState:
+    """Read the global epoch and live federated mapping in one statement."""
+    live = and_(
+        FederatedCredential.id == credential_id,
+        FederatedCredential.identity_id == identity_id,
+        FederatedCredential.revision == revision,
+        FederatedCredential.enabled.is_(True),
+        User.id == identity_id,
+        User.is_active.is_(True),
+        User.is_system.is_(False),
+        User.identity_kind.is_not(None),
+    )
+    row = (
+        await db.execute(
+            select(AuthzVersion.version, live.label("live"))
+            .select_from(AuthzVersion)
+            .outerjoin(FederatedCredential, FederatedCredential.id == credential_id)
+            .outerjoin(User, User.id == FederatedCredential.identity_id)
             .where(*_global_epoch_row())
         )
     ).one_or_none()

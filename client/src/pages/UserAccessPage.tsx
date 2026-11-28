@@ -16,6 +16,7 @@ import {
 import { AccessMap } from "@/components/access/AccessMap";
 import { TestAccessPanel } from "@/components/access/TestAccessPanel";
 import { IdentityActions } from "@/components/identities/IdentityActions";
+import { FederatedCredentialsPanel } from "@/components/identities/FederatedCredentialsPanel";
 import { IdentityGlyph } from "@/components/identities/IdentityGlyph";
 import { IdentityOrganizationChip } from "@/components/identities/IdentityName";
 import { ReachChip } from "@/components/access/ReachChip";
@@ -240,7 +241,10 @@ function PersonHeader({
 						</h1>
 						{!identityKind && (
 							<p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-								<span data-pii className="[overflow-wrap:anywhere]">
+								<span
+									data-pii
+									className="[overflow-wrap:anywhere]"
+								>
 									{user.email}
 								</span>
 								{homeOrganization && (
@@ -545,15 +549,32 @@ export function UserAccessPage() {
 				}
 			/>
 			{identityKind ? (
-				canViewAccess ? (
-					<PageScrollArea className="lg:overflow-auto">
-						{accessContent}
-					</PageScrollArea>
-				) : (
-					<p className="text-sm text-muted-foreground">
-						Your roles don't let you see this identity's access.
-					</p>
-				)
+				<PageScrollArea className="lg:overflow-auto">
+					<div className="space-y-8">
+						{canViewAccess ? (
+							accessContent
+						) : (
+							<p className="text-sm text-muted-foreground">
+								Your roles don't let you see this identity's
+								access.
+							</p>
+						)}
+
+						{identityKind &&
+							authorization.canAt(
+								"users.read",
+								orgTarget(person.organization_id),
+							) && (
+								<FederatedCredentialsPanel
+									identityId={person.id}
+									canManage={authorization.canAt(
+										"userlifecycle.readwrite",
+										orgTarget(person.organization_id),
+									)}
+								/>
+							)}
+					</div>
+				</PageScrollArea>
 			) : (
 				<Tabs
 					value={currentTab}

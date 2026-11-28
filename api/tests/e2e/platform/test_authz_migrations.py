@@ -39,6 +39,9 @@ pytestmark = pytest.mark.e2e
 PRE_PR1A_REVISION = "20261025_remote_worker_ownership"
 PR1A_REVISION = "20261030_authz_versions"
 STABLE_1_4_1_REVISION = "20260916_solution_inbound"
+# The historical target installs 50 epoch triggers. Later revisions can add
+# triggers to the current catalog without changing that migration's contract.
+PR1A_TRIGGER_COUNT = 50
 
 
 def _expected_trigger_count() -> int:
@@ -111,7 +114,7 @@ def test_an_existing_database_upgrades_without_claiming_a_protocol_start() -> No
     assert state["epoch_kinds"] == ["global"]
     # Only a starting API records its protocol on an upgraded database.
     assert state["protocols"] == []
-    assert state["triggers"] == _expected_trigger_count()
+    assert state["triggers"] == PR1A_TRIGGER_COUNT
     assert len(state["columns"]) == 3
     assert state["bumps"] is True
 

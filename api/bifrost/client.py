@@ -403,6 +403,9 @@ async def _refresh_locked(
             return stored_access_token
 
         refresh_token = coordinator.latest_refresh_token or stored_refresh_token
+        if not refresh_token:
+            logger.info("Bifrost workload access token expired; acquire a new external assertion with bifrost login")
+            return None
 
         async with httpx.AsyncClient(base_url=normalized_url, timeout=30.0) as client:
             response = await client.post(
@@ -963,6 +966,11 @@ class BifrostClient:
 
         # Check if token needs refresh
         if creds and is_token_expired(api_url=creds["api_url"]):
+            if not creds.get("refresh_token"):
+                raise RuntimeError(
+                    "Workload credentials expired. Acquire a new assertion with "
+                    "'bifrost login --oidc', '--managed-identity', or '--subject-token-file'."
+                )
             # Try to refresh
             access_token = _refresh_connection_access_token_sync(
                 creds["api_url"], creds["access_token"]

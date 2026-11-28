@@ -46,7 +46,8 @@ export function canManageIdentity(
 
 /**
  * An identity's actions, on its row in Identities and on its page. Identities
- * don't sign in, so beyond opening one, only a custom identity can be renamed
+ * cannot use human sign-in; federated credentials live on their detail page.
+ * Beyond opening one, only a custom identity can be renamed
  * or deleted; default identities keep their name and can't be deleted.
  */
 export function IdentityActions({

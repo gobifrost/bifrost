@@ -26,6 +26,7 @@ from typing import Any
 
 from authlib.integrations.base_client.async_openid import AsyncOpenIDMixin
 from authlib.integrations.httpx_client import AsyncOAuth2Client
+from authlib.oauth2.claims import JWTClaims
 
 JwksProvider = Callable[[bool], Awaitable[Mapping[str, Any]]]
 
@@ -177,6 +178,35 @@ class OIDCRelyingParty(AsyncOAuth2Client, AsyncOpenIDMixin):
         if user_info is None:
             raise IDTokenValidationError("Authorization server did not return an id_token")
         return dict(user_info)
+
+    async def parse_verified_workload_token(self, raw_token: str) -> dict[str, Any]:
+        """Verify a configured external JWT without a browser nonce.
+
+        This intentionally uses the same Authlib parser and JWKS refresh path
+        as browser OIDC. Browser sign-in continues to call
+        :meth:`parse_verified_id_token`, whose non-empty nonce requirement is
+        unchanged. Workload exchange receives an already-bound assertion and
+        therefore has no authorization-request nonce to validate.
+        """
+        if not isinstance(raw_token, str) or not raw_token:
+            raise IDTokenValidationError("Subject token is missing")
+        try:
+            claims = await self.parse_id_token(
+                {"id_token": raw_token},
+                nonce=None,
+                claims_options=copy.deepcopy(self.claims_options),
+                # Workload assertions are not browser ID tokens: they do not
+                # carry the browser nonce or ID-token azp/at_hash semantics.
+                # Authlib's base OAuth JWT claims retain the shared signature,
+                # JWKS-refresh, issuer, audience and time validation path.
+                claims_cls=JWTClaims,
+                leeway=0,
+            )
+        except Exception as exc:
+            raise IDTokenValidationError(str(exc)) from exc
+        if claims is None:
+            raise IDTokenValidationError("Subject token could not be verified")
+        return dict(claims)
 
 
 OIDCClientFactory = Callable[..., "OIDCRelyingParty"]

@@ -35,7 +35,7 @@ def require_app_approver(user: UserPrincipal) -> None:
     """Approval delegates only an active human's own account authority."""
     if user.impersonated_by_user_id is not None or user.impersonation_session_id is not None:
         raise HTTPException(403, "Exit impersonation before connecting an app")
-    if not user.is_active or user.embed or user.runtime_authority is not None or user.service_id:
+    if not user.is_active or user.embed or user.runtime_authority is not None or user.service_id or user.workload_credential_id is not None:
         raise HTTPException(403, "Sign in with your own account before connecting an app")
 
 
